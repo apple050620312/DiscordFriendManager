@@ -6,6 +6,8 @@ const state = {
   csrfToken: "",
   pendingRemoveId: null,
   removingId: null,
+  scanStatus: null,
+  scanPollTimer: null,
 };
 
 const TYPE_LABELS = {
@@ -144,6 +146,103 @@ function updateCounts() {
   });
 }
 
+const SCAN_STATUS_LABELS = {
+  idle: "尚未完成",
+  scanning: "掃描中",
+  pausing: "正在暫停",
+  paused: "已暫停",
+  complete: "已完成",
+  error: "發生錯誤",
+};
+
+function renderScanStatus(scan) {
+  const previousStatus = state.scanStatus?.status;
+  state.scanStatus = scan;
+  const progress = $("#scanProgress");
+  progress.max = Math.max(scan.total, 1);
+  progress.value = scan.completed;
+  $("#scanStatus").textContent = SCAN_STATUS_LABELS[scan.status] || scan.status;
+  $("#scanStatus").className = `scan-status ${scan.status}`;
+  $("#scanCounts").textContent = `已檢查 ${scan.completed.toLocaleString("zh-TW")} / ${scan.total.toLocaleString("zh-TW")} · 有時間 ${scan.with_time.toLocaleString("zh-TW")} · 剩餘 ${scan.remaining.toLocaleString("zh-TW")}`;
+
+  if (scan.error) {
+    $("#scanSummary").textContent = scan.error;
+  } else if (scan.status === "complete") {
+    $("#scanSummary").textContent = "所有好友均已檢查，結果已保存至本機快取。";
+  } else if (scan.status === "scanning" || scan.status === "pausing") {
+    $("#scanSummary").textContent = "正在逐位取得 DM 的最後訊息時間，Discord 限流時會自動等待。";
+  } else {
+    $("#scanSummary").textContent = "Discord 的最近 DM 清單不完整，可從目前進度接續補查。";
+  }
+
+  const active = scan.status === "scanning" || scan.status === "pausing";
+  $("#startScanButton").hidden = active || scan.status === "complete";
+  $("#startScanButton").textContent = scan.completed ? "繼續補齊" : "補齊時間";
+  $("#pauseScanButton").hidden = !active;
+  $("#pauseScanButton").disabled = scan.status === "pausing";
+  return previousStatus;
+}
+
+async function reloadRelationships() {
+  const response = await fetch("/api/relationships", { cache: "no-store" });
+  if (!response.ok) throw new Error("無法重新載入好友資料");
+  const payload = await response.json();
+  state.all = payload.relationships;
+  renderSummary(payload);
+  applyFilters();
+}
+
+function scheduleScanPoll() {
+  clearTimeout(state.scanPollTimer);
+  state.scanPollTimer = setTimeout(pollScanStatus, 1000);
+}
+
+async function pollScanStatus() {
+  try {
+    const response = await fetch("/api/message-scan", { cache: "no-store" });
+    if (!response.ok) throw new Error("無法取得掃描進度");
+    const scan = await response.json();
+    const previousStatus = renderScanStatus(scan);
+    if (scan.status === "scanning" || scan.status === "pausing") {
+      scheduleScanPoll();
+    } else if (previousStatus === "scanning" || previousStatus === "pausing") {
+      await reloadRelationships();
+    }
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
+async function startMessageScan() {
+  try {
+    const response = await fetch("/api/message-scan", {
+      method: "POST",
+      headers: { "X-CSRF-Token": state.csrfToken },
+    });
+    const scan = await response.json();
+    if (!response.ok) throw new Error(scan.error || "無法啟動掃描");
+    renderScanStatus(scan);
+    scheduleScanPoll();
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
+async function pauseMessageScan() {
+  try {
+    const response = await fetch("/api/message-scan", {
+      method: "DELETE",
+      headers: { "X-CSRF-Token": state.csrfToken },
+    });
+    const scan = await response.json();
+    if (!response.ok) throw new Error(scan.error || "無法暫停掃描");
+    renderScanStatus(scan);
+    scheduleScanPoll();
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
 function csvCell(value) {
   return `"${String(value ?? "").replaceAll('"', '""')}"`;
 }
@@ -233,17 +332,22 @@ function selectNavigation(type, button) {
 
 async function initialise() {
   try {
-    const [dataResponse, statusResponse] = await Promise.all([
+    const [dataResponse, statusResponse, scanResponse] = await Promise.all([
       fetch("/api/relationships", { cache: "no-store" }),
       fetch("/api/status", { cache: "no-store" }),
+      fetch("/api/message-scan", { cache: "no-store" }),
     ]);
-    if (!dataResponse.ok || !statusResponse.ok) throw new Error("本機 API 回應失敗");
-    const [payload, status] = await Promise.all([dataResponse.json(), statusResponse.json()]);
+    if (!dataResponse.ok || !statusResponse.ok || !scanResponse.ok) throw new Error("本機 API 回應失敗");
+    const [payload, status, scan] = await Promise.all([
+      dataResponse.json(), statusResponse.json(), scanResponse.json(),
+    ]);
     state.all = payload.relationships;
     state.csrfToken = status.csrf_token;
     $("#fetchedAt").dataset.fetchedAt = payload.fetched_at;
     renderSummary(payload);
     applyFilters();
+    renderScanStatus(scan);
+    if (scan.status === "scanning" || scan.status === "pausing") scheduleScanPoll();
   } catch (error) {
     $("#relationshipRows").innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
     showToast("資料載入失敗，請重新啟動程式。");
@@ -281,6 +385,11 @@ $("#removeFriendDialog").addEventListener("close", (event) => {
   }
   state.pendingRemoveId = null;
 });
+$("#startScanButton").addEventListener("click", () => $("#startScanDialog").showModal());
+$("#startScanDialog").addEventListener("close", (event) => {
+  if (event.target.returnValue === "confirm") startMessageScan();
+});
+$("#pauseScanButton").addEventListener("click", pauseMessageScan);
 $(".nav-item.active").addEventListener("click", (event) => selectNavigation("all", event.currentTarget));
 $("#friendsNav").addEventListener("click", (event) => selectNavigation("friend", event.currentTarget));
 $("#outgoingNav").addEventListener("click", (event) => selectNavigation("outgoing_request", event.currentTarget));

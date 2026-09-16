@@ -58,17 +58,20 @@ class RelationshipTests(unittest.TestCase):
             cache_dir = Path(directory)
             cache_path = cache_dir / "relationships.json"
             lock_path = cache_dir / "fetch.lock"
+            message_scan_path = cache_dir / "message_scan.json"
             with (
                 patch.object(app, "CACHE_DIR", cache_dir),
                 patch.object(app, "CACHE_PATH", cache_path),
                 patch.object(app, "LOCK_PATH", lock_path),
+                patch.object(app, "MESSAGE_SCAN_PATH", message_scan_path),
             ):
                 saved = app.save_cache([{"id": "1"}])
                 loaded = app.load_cache()
 
             self.assertEqual(saved["source"], "discord")
             self.assertEqual(loaded["source"], "cache")
-            self.assertEqual(loaded["relationships"], [{"id": "1"}])
+            self.assertEqual(loaded["relationships"][0]["id"], "1")
+            self.assertFalse(loaded["relationships"][0]["last_message_checked"])
             self.assertNotIn("TOKEN", json.dumps(loaded))
 
     def test_get_data_does_not_refetch_completed_dm_activity(self) -> None:
@@ -87,6 +90,61 @@ class RelationshipTests(unittest.TestCase):
 
         self.assertIs(result, cached)
         fetch_activity.assert_not_called()
+
+    def test_message_scan_results_mark_empty_conversations_checked(self) -> None:
+        payload = {
+            "relationships": [
+                {"id": "123", "last_message_at": None},
+                {"id": "456", "last_message_at": "2026-01-01T00:00:00+00:00"},
+            ]
+        }
+
+        app.apply_message_scan_results(payload, {"123": None})
+
+        self.assertTrue(payload["relationships"][0]["last_message_checked"])
+        self.assertIsNone(payload["relationships"][0]["last_message_at"])
+        self.assertTrue(payload["relationships"][1]["last_message_checked"])
+
+    def test_message_scan_processes_only_unchecked_friends(self) -> None:
+        server = object.__new__(app.DashboardServer)
+        server.payload = {
+            "relationships": [
+                {
+                    "id": "123",
+                    "type_name": "friend",
+                    "last_message_at": "2026-01-01T00:00:00+00:00",
+                    "last_message_checked": True,
+                },
+                {
+                    "id": "456",
+                    "type_name": "friend",
+                    "last_message_at": None,
+                    "last_message_checked": False,
+                },
+                {
+                    "id": "789",
+                    "type_name": "outgoing_request",
+                    "last_message_at": None,
+                    "last_message_checked": False,
+                },
+            ]
+        }
+        server.data_lock = app.threading.RLock()
+        server.discord_service = Mock()
+        server.discord_service.fetch_last_message_at.return_value = None
+        server.message_scan_results = {}
+        server.message_scan_stop = app.threading.Event()
+        server.message_scan_state = "scanning"
+        server.message_scan_error = None
+
+        with patch.object(app, "write_message_scan") as write_scan:
+            server._run_message_scan()
+
+        server.discord_service.fetch_last_message_at.assert_called_once_with("456")
+        self.assertTrue(server.payload["relationships"][1]["last_message_checked"])
+        self.assertEqual(server.message_scan_results, {"456": None})
+        self.assertEqual(server.message_scan_state, "complete")
+        write_scan.assert_called_once_with({"456": None})
 
     def test_remove_friend_updates_cache_only_after_remote_success(self) -> None:
         payload = {

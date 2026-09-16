@@ -29,6 +29,8 @@ TOKEN=你的_user_token
 
 舊快取第一次升級時會額外取得一次私訊頻道清單，利用每個 DM 的 `last_message_id` 在本機計算「最後訊息時間」，並將完成狀態寫入快取。此時間代表你們私訊頻道的最後一則訊息，可能由你或對方發出；沒有可見 DM 頻道時顯示為空。程式不會逐位讀取訊息歷史。
 
+Discord 的私訊頻道清單只涵蓋最近一部分 DM，因此初始資料可能不完整。儀表板的「補齊時間」會逐位取得或建立好友的 DM 頻道，再由 `last_message_id` 計算時間；它不會讀取或傳送訊息，但部分舊 DM 可能重新出現在 Discord 私訊清單。掃描為單線程、可暫停，進度與結果逐筆寫入 `cache/message_scan.json`，重新啟動後可接續而不重做已完成項目。
+
 `discord.py-self` 的 HTTP client 會讀取 Discord 的 rate-limit bucket、`X-RateLimit-*` 與 `Retry-After`，遇到 429 時動態等待；跨程序鎖則避免多個本機執行個體同時補快取。
 
 若要取得全新資料，先明確清除快取：

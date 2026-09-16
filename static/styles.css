@@ -60,6 +60,19 @@ h1 { color: var(--strong); font-size: 1rem; font-weight: 700; }
 main { min-height: 0; overflow: auto; padding: 20px 28px 40px; }
 .notice { padding: 10px 12px; display: flex; gap: 10px; align-items: baseline; color: #f0d69a; background: #3d3528; border-left: 3px solid #f0b232; border-radius: 3px; font-size: .8rem; }
 .notice strong { color: #ffd98a; white-space: nowrap; }
+.scan-panel { margin-top: 14px; padding: 14px 16px; background: #2b2d31; border-radius: 4px; }
+.scan-heading, .scan-footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.scan-heading h2 { color: var(--strong); font-size: .92rem; }
+.scan-heading p { margin-top: 4px; color: var(--muted); font-size: .75rem; }
+.scan-status { flex: 0 0 auto; padding: 3px 7px; color: #cdd1ff; background: rgba(88,101,242,.18); border-radius: 3px; font-size: .7rem; font-weight: 750; }
+.scan-status.complete { color: #b6f3cc; background: rgba(35,165,89,.16); }
+.scan-status.error { color: #f4a3a6; background: rgba(218,55,60,.16); }
+.scan-panel progress { width: 100%; height: 8px; margin: 14px 0 10px; display: block; overflow: hidden; appearance: none; border: 0; border-radius: 4px; background: #1e1f22; }
+.scan-panel progress::-webkit-progress-bar { background: #1e1f22; }
+.scan-panel progress::-webkit-progress-value { background: var(--blurple); border-radius: 4px; }
+.scan-panel progress::-moz-progress-bar { background: var(--blurple); border-radius: 4px; }
+.scan-footer { color: var(--muted); font-size: .73rem; }
+.scan-actions { display: flex; gap: 8px; }
 .summary { display: grid; grid-template-columns: repeat(4, minmax(110px, 1fr)); margin: 18px 0 6px; border-bottom: 1px solid var(--line); }
 .metric { min-height: 68px; padding: 10px 16px 14px 0; }
 .metric + .metric { padding-left: 18px; border-left: 1px solid var(--line); }
@@ -103,6 +116,8 @@ select option { background: var(--sidebar); }
 .button:disabled { cursor: not-allowed; opacity: .4; }
 .button-secondary { color: var(--text); background: #4e5058; }
 .button-secondary:hover:not(:disabled) { background: #5b5d66; }
+.button-primary { color: white; background: var(--blurple); }
+.button-primary:hover:not(:disabled) { background: #4752c4; }
 .button-danger { color: white; background: var(--red); }
 .button-danger:hover { background: #a1282c; }
 
@@ -133,6 +148,7 @@ dialog p { margin: 12px 0 22px; color: #b5bac1; line-height: 1.55; }
   .title-subtitle, .title-divider { display: none; }
   .header-search { width: 62%; }
   .notice { align-items: flex-start; flex-direction: column; }
+  .scan-heading, .scan-footer { align-items: flex-start; flex-direction: column; }
   .controls { grid-template-columns: 1fr; }
   .friend-list { min-width: 0; }
   .column-header { display: none; }

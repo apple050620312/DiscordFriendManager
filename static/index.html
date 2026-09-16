@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="light">
     <title>Discord 好友整理</title>
-    <link rel="stylesheet" href="/styles.css?v=5">
+    <link rel="stylesheet" href="/styles.css?v=6">
   </head>
   <body>
     <div class="app-shell">
@@ -51,6 +51,24 @@
           <section class="notice" aria-label="風險提醒">
             <strong>帳號風險</strong>
             <span>使用 user token 自動化可能違反 Discord 服務條款，即使只讀或低頻操作仍有停權風險。</span>
+          </section>
+
+          <section class="scan-panel" aria-label="最後訊息時間掃描">
+            <div class="scan-heading">
+              <div>
+                <h2>最後訊息時間</h2>
+                <p id="scanSummary">正在讀取掃描狀態…</p>
+              </div>
+              <span id="scanStatus" class="scan-status">讀取中</span>
+            </div>
+            <progress id="scanProgress" max="1" value="0">0%</progress>
+            <div class="scan-footer">
+              <span id="scanCounts">—</span>
+              <div class="scan-actions">
+                <button id="startScanButton" class="button button-primary" type="button">補齊時間</button>
+                <button id="pauseScanButton" class="button button-secondary" type="button" hidden>暫停</button>
+              </div>
+            </div>
           </section>
 
           <section class="summary" aria-label="資料摘要">
@@ -142,7 +160,18 @@
       </form>
     </dialog>
 
+    <dialog id="startScanDialog">
+      <form method="dialog">
+        <h2>補齊最後訊息時間？</h2>
+        <p>程式會逐位向 Discord 取得或建立 DM 頻道，不會讀取或傳送訊息。部分舊 DM 可能重新出現在 Discord 私訊清單。進度可暫停，重新啟動後可接續。</p>
+        <div class="dialog-actions">
+          <button class="button button-secondary" value="cancel">取消</button>
+          <button class="button button-primary" value="confirm">開始掃描</button>
+        </div>
+      </form>
+    </dialog>
+
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script src="/app.js?v=5" defer></script>
+    <script src="/app.js?v=6" defer></script>
   </body>
 </html>

@@ -25,8 +25,10 @@ ROOT = Path(__file__).resolve().parent
 STATIC_DIR = ROOT / "static"
 CACHE_DIR = ROOT / "cache"
 CACHE_PATH = CACHE_DIR / "relationships.json"
+MESSAGE_SCAN_PATH = CACHE_DIR / "message_scan.json"
 LOCK_PATH = CACHE_DIR / "fetch.lock"
 CACHE_VERSION = 1
+MESSAGE_SCAN_VERSION = 1
 DISCORD_EPOCH_MS = 1_420_070_400_000
 LOCK_STALE_SECONDS = 300
 
@@ -115,6 +117,7 @@ def load_cache() -> dict[str, Any] | None:
         raise CacheError(f"無法讀取快取：{exc}") from exc
     if payload.get("version") != CACHE_VERSION or not isinstance(payload.get("relationships"), list):
         raise CacheError("快取格式不相容；請明確執行 --clear-cache 後再啟動。")
+    apply_message_scan_results(payload, load_message_scan())
     payload["source"] = "cache"
     return payload
 
@@ -139,6 +142,45 @@ def write_cache(payload: dict[str, Any]) -> None:
         encoding="utf-8",
     )
     os.replace(temporary, CACHE_PATH)
+
+
+def load_message_scan() -> dict[str, str | None]:
+    if not MESSAGE_SCAN_PATH.exists():
+        return {}
+    try:
+        payload = json.loads(MESSAGE_SCAN_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise CacheError(f"無法讀取訊息時間掃描快取：{exc}") from exc
+    if payload.get("version") != MESSAGE_SCAN_VERSION or not isinstance(payload.get("results"), dict):
+        raise CacheError("訊息時間掃描快取格式不相容；請明確清除快取後再啟動。")
+    return payload["results"]
+
+
+def write_message_scan(results: dict[str, str | None]) -> None:
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "version": MESSAGE_SCAN_VERSION,
+        "updated_at": utc_now(),
+        "results": results,
+    }
+    temporary = MESSAGE_SCAN_PATH.with_suffix(".tmp")
+    temporary.write_text(
+        json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+        encoding="utf-8",
+    )
+    os.replace(temporary, MESSAGE_SCAN_PATH)
+
+
+def apply_message_scan_results(
+    payload: dict[str, Any], results: dict[str, str | None]
+) -> None:
+    for relationship in payload["relationships"]:
+        user_id = relationship["id"]
+        if user_id in results:
+            relationship["last_message_at"] = results[user_id]
+            relationship["last_message_checked"] = True
+        else:
+            relationship["last_message_checked"] = bool(relationship.get("last_message_at"))
 
 
 @contextmanager
@@ -265,6 +307,22 @@ class DiscordService:
         future = asyncio.run_coroutine_threadsafe(self._remove_friend(int(user_id)), self._loop)
         future.result(timeout=600)
 
+    async def _fetch_last_message_at(self, user_id: int) -> str | None:
+        if self._async_lock is None:
+            self._async_lock = asyncio.Lock()
+        async with self._async_lock:
+            client = await self._ensure_client()
+            channel = await client.http.start_private_message(user_id)
+            return snowflake_created_at(str(channel.get("last_message_id") or ""))
+
+    def fetch_last_message_at(self, user_id: str) -> str | None:
+        if not user_id.isdecimal():
+            raise ValueError("無效的 Discord 使用者 ID。")
+        future = asyncio.run_coroutine_threadsafe(
+            self._fetch_last_message_at(int(user_id)), self._loop
+        )
+        return future.result(timeout=600)
+
     async def _close(self) -> None:
         if self._client is not None:
             await self._client.close()
@@ -300,7 +358,13 @@ def get_data() -> dict[str, Any]:
 
 def clear_cache() -> bool:
     removed = False
-    for path in (CACHE_PATH, CACHE_PATH.with_suffix(".tmp"), LOCK_PATH):
+    for path in (
+        CACHE_PATH,
+        CACHE_PATH.with_suffix(".tmp"),
+        MESSAGE_SCAN_PATH,
+        MESSAGE_SCAN_PATH.with_suffix(".tmp"),
+        LOCK_PATH,
+    ):
         if path.exists():
             path.unlink()
             removed = True
@@ -350,7 +414,20 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 }
             )
             return
+        if self.path == "/api/message-scan":
+            self._json(self.dashboard_server.message_scan_status())
+            return
         super().do_GET()
+
+    def do_POST(self) -> None:
+        supplied = self.headers.get("X-CSRF-Token", "")
+        if not secrets.compare_digest(supplied, self.dashboard_server.csrf_token):
+            self._json({"error": "拒絕未授權的本機請求。"}, HTTPStatus.FORBIDDEN)
+            return
+        if self.path != "/api/message-scan":
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+        self._json(self.dashboard_server.start_message_scan(), HTTPStatus.ACCEPTED)
 
     def do_DELETE(self) -> None:
         supplied = self.headers.get("X-CSRF-Token", "")
@@ -383,8 +460,18 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             self._json({"removed": removed, "id": user_id})
             return
 
+        if self.path == "/api/message-scan":
+            self._json(self.dashboard_server.pause_message_scan())
+            return
+
         if self.path != "/api/cache":
             self.send_error(HTTPStatus.NOT_FOUND)
+            return
+        if self.dashboard_server.message_scan_active():
+            self._json(
+                {"error": "請先暫停最後訊息時間掃描，再清除快取。"},
+                HTTPStatus.CONFLICT,
+            )
             return
         removed = clear_cache()
         self._json(
@@ -404,6 +491,117 @@ class DashboardServer(ThreadingHTTPServer):
         self.csrf_token = secrets.token_urlsafe(32)
         self.discord_service = DiscordService()
         self.data_lock = threading.RLock()
+        self.message_scan_results = load_message_scan()
+        self.message_scan_stop = threading.Event()
+        self.message_scan_thread: threading.Thread | None = None
+        self.message_scan_state = "idle"
+        self.message_scan_error: str | None = None
+        if self._message_scan_completed() == self._message_scan_total():
+            self.message_scan_state = "complete"
+
+    def _message_scan_friends(self) -> list[dict[str, Any]]:
+        return [
+            item for item in self.payload["relationships"] if item["type_name"] == "friend"
+        ]
+
+    def _message_scan_total(self) -> int:
+        return len(self._message_scan_friends())
+
+    def _message_scan_completed(self) -> int:
+        return sum(
+            bool(item.get("last_message_checked"))
+            for item in self._message_scan_friends()
+        )
+
+    def message_scan_status(self) -> dict[str, Any]:
+        with self.data_lock:
+            friends = self._message_scan_friends()
+            total = len(friends)
+            completed = sum(bool(item.get("last_message_checked")) for item in friends)
+            with_time = sum(bool(item.get("last_message_at")) for item in friends)
+            return {
+                "status": self.message_scan_state,
+                "total": total,
+                "completed": completed,
+                "remaining": total - completed,
+                "with_time": with_time,
+                "error": self.message_scan_error,
+            }
+
+    def message_scan_active(self) -> bool:
+        return bool(self.message_scan_thread and self.message_scan_thread.is_alive())
+
+    def start_message_scan(self) -> dict[str, Any]:
+        with self.data_lock:
+            if self.message_scan_active():
+                return self.message_scan_status()
+            if self._message_scan_completed() >= self._message_scan_total():
+                self.message_scan_state = "complete"
+                return self.message_scan_status()
+            self.message_scan_stop.clear()
+            self.message_scan_state = "scanning"
+            self.message_scan_error = None
+            self.message_scan_thread = threading.Thread(
+                target=self._run_message_scan,
+                name="message-time-scan",
+                daemon=True,
+            )
+            self.message_scan_thread.start()
+            return self.message_scan_status()
+
+    def pause_message_scan(self) -> dict[str, Any]:
+        with self.data_lock:
+            if self.message_scan_active():
+                self.message_scan_stop.set()
+                self.message_scan_state = "pausing"
+            return self.message_scan_status()
+
+    def _run_message_scan(self) -> None:
+        while not self.message_scan_stop.is_set():
+            with self.data_lock:
+                target = next(
+                    (
+                        item
+                        for item in self._message_scan_friends()
+                        if not item.get("last_message_checked")
+                    ),
+                    None,
+                )
+            if target is None:
+                with self.data_lock:
+                    self.message_scan_state = "complete"
+                return
+
+            try:
+                timestamp = self.discord_service.fetch_last_message_at(target["id"])
+            except TimeoutError:
+                error = "Discord 回應逾時；可稍後繼續掃描。"
+            except discord.HTTPException as exc:
+                if exc.status in {400, 403, 404}:
+                    with self.data_lock:
+                        target["last_message_at"] = None
+                        target["last_message_checked"] = True
+                        self.message_scan_results[target["id"]] = None
+                        write_message_scan(self.message_scan_results)
+                    continue
+                error = f"Discord 回傳 HTTP {exc.status}；掃描已暫停。"
+            except (OSError, RuntimeError, ValueError) as exc:
+                error = f"掃描失敗：{exc}"
+            else:
+                with self.data_lock:
+                    target["last_message_at"] = timestamp
+                    target["last_message_checked"] = True
+                    self.message_scan_results[target["id"]] = timestamp
+                    write_message_scan(self.message_scan_results)
+                continue
+
+            with self.data_lock:
+                self.message_scan_error = error
+                self.message_scan_state = "error"
+            return
+
+        with self.data_lock:
+            self.message_scan_state = "paused"
 
     def remove_friend(self, user_id: str) -> bool:
         with self.data_lock:
@@ -431,6 +629,9 @@ class DashboardServer(ThreadingHTTPServer):
             return removed
 
     def server_close(self) -> None:
+        self.message_scan_stop.set()
+        if self.message_scan_thread and self.message_scan_thread.is_alive():
+            self.message_scan_thread.join(timeout=15)
         self.discord_service.close()
         super().server_close()
 
