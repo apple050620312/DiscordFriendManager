@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="light">
     <title>Discord 好友整理</title>
-    <link rel="stylesheet" href="/styles.css?v=4">
+    <link rel="stylesheet" href="/styles.css?v=5">
   </head>
   <body>
     <div class="app-shell">
@@ -77,7 +77,7 @@
               <select id="sortField">
                 <option value="since">成為好友時間</option>
                 <option value="account_created_at">帳號建立時間</option>
-                <option value="last_message_at">最後講過話</option>
+                <option value="last_message_at">最後訊息時間</option>
               </select>
             </label>
             <label>
@@ -107,7 +107,7 @@
               <span>關係</span>
               <span>成為好友</span>
               <span>帳號建立</span>
-              <span>最後講過話</span>
+              <span>最後訊息時間</span>
               <span>操作</span>
             </div>
             <div id="relationshipRows" class="rows"></div>
@@ -143,6 +143,6 @@
     </dialog>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script src="/app.js?v=4" defer></script>
+    <script src="/app.js?v=5" defer></script>
   </body>
 </html>

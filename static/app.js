@@ -149,7 +149,7 @@ function csvCell(value) {
 }
 
 function exportCsv() {
-  const headers = ["ID", "顯示名稱", "使用者名稱", "關係", "成為好友時間", "帳號建立時間", "最後講過話", "自訂暱稱", "備註", "Guild Tag", "公開旗標"];
+  const headers = ["ID", "顯示名稱", "使用者名稱", "關係", "成為好友時間", "帳號建立時間", "最後訊息時間", "自訂暱稱", "備註", "Guild Tag", "公開旗標"];
   const rows = state.filtered.map((item) => [
     item.id, item.display_name, item.username, TYPE_LABELS[item.type_name] || item.type_name,
     item.since, item.account_created_at, item.last_message_at, item.nickname, item.note, item.guild_tag,
