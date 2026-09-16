@@ -515,7 +515,6 @@ $("#refreshButton").addEventListener("click", refreshRelationships);
 $("#loginButton").addEventListener("click", () => showTokenDialog());
 $("#bannerLoginButton").addEventListener("click", () => showTokenDialog());
 $("#tokenHelpButton").addEventListener("click", () => showTokenDialog(true));
-$("#privacyButton").addEventListener("click", () => $("#privacyDialog").showModal());
 $("#accountPrivacyButton").addEventListener("click", () => $("#privacyDialog").showModal());
 $("#projectInfoButton").addEventListener("click", () => $("#projectDialog").showModal());
 $("#logoutButton").addEventListener("click", () => { forgetToken(); showToast("已從此分頁登出並清除記憶體中的 Token。"); });
