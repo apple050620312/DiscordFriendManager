@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <title>Discord 好友整理</title>
+    <link rel="stylesheet" href="/styles.css?v=2">
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="server-rail" aria-label="工具列">
+        <div class="server-mark" title="Discord Friend Analyze">DF</div>
+        <div class="rail-divider"></div>
+        <div class="rail-icon active" aria-hidden="true">友</div>
+      </aside>
+
+      <aside class="sidebar">
+        <div class="sidebar-title">好友整理</div>
+        <nav class="sidebar-nav" aria-label="資料檢視">
+          <button class="nav-item active" type="button"><span class="nav-symbol">☷</span>所有關係</button>
+          <button id="friendsNav" class="nav-item" type="button"><span class="nav-symbol">♟</span>好友</button>
+          <button id="outgoingNav" class="nav-item" type="button"><span class="nav-symbol">＋</span>送出的邀請</button>
+        </nav>
+        <div class="sidebar-heading">本機資料</div>
+        <div class="cache-panel">
+          <span id="sourceBadge" class="badge">載入中</span>
+          <span id="fetchedAt">—</span>
+        </div>
+        <div class="sidebar-footer">
+          <button id="exportButton" class="sidebar-action" type="button">匯出 CSV</button>
+          <button id="clearCacheButton" class="sidebar-action danger-text" type="button">清除快取</button>
+        </div>
+      </aside>
+
+      <div class="workspace">
+        <header class="topbar">
+          <div class="title-group">
+            <span class="title-icon">♟</span>
+            <h1>好友</h1>
+            <span class="title-divider"></span>
+            <span class="title-subtitle">排序與整理</span>
+          </div>
+          <label class="header-search">
+            <span class="sr-only">搜尋</span>
+            <input id="searchInput" type="search" placeholder="搜尋名稱、帳號、ID、備註" autocomplete="off">
+          </label>
+        </header>
+
+        <main>
+          <section class="notice" aria-label="風險提醒">
+            <strong>帳號風險</strong>
+            <span>使用 user token 自動化可能違反 Discord 服務條款，即使只讀或低頻操作仍有停權風險。</span>
+          </section>
+
+          <section class="summary" aria-label="資料摘要">
+            <div class="metric"><span>全部關係</span><strong id="totalCount">—</strong></div>
+            <div class="metric"><span>好友</span><strong id="friendCount">—</strong></div>
+            <div class="metric"><span>送出的邀請</span><strong id="outgoingCount">—</strong></div>
+            <div class="metric"><span>有備註</span><strong id="notedCount">—</strong></div>
+          </section>
+
+          <section class="controls" aria-label="篩選與排序">
+            <label>
+              <span>關係</span>
+              <select id="typeFilter">
+                <option value="all">全部</option>
+                <option value="friend">好友</option>
+                <option value="incoming_request">收到的邀請</option>
+                <option value="outgoing_request">送出的邀請</option>
+                <option value="blocked">封鎖</option>
+                <option value="implicit">其他</option>
+              </select>
+            </label>
+            <label>
+              <span>排序</span>
+              <select id="sortField">
+                <option value="since">成為好友時間</option>
+                <option value="account_created_at">帳號建立時間</option>
+                <option value="display_name">顯示名稱</option>
+                <option value="username">使用者名稱</option>
+                <option value="public_flags">公開旗標</option>
+              </select>
+            </label>
+            <label>
+              <span>方向</span>
+              <select id="sortDirection">
+                <option value="asc">由早到晚 / A–Z</option>
+                <option value="desc">由晚到早 / Z–A</option>
+              </select>
+            </label>
+            <label>
+              <span>每頁</span>
+              <select id="pageSize">
+                <option value="50">50</option>
+                <option value="100" selected>100</option>
+                <option value="250">250</option>
+              </select>
+            </label>
+          </section>
+
+          <section class="friend-list" aria-label="好友資料">
+            <div class="list-meta">
+              <span id="resultCount">載入中…</span>
+              <span id="pageStatus"></span>
+            </div>
+            <div id="relationshipRows" class="rows"></div>
+            <div class="pagination">
+              <button id="previousPage" class="button button-secondary" type="button">上一頁</button>
+              <button id="nextPage" class="button button-secondary" type="button">下一頁</button>
+            </div>
+          </section>
+        </main>
+      </div>
+    </div>
+
+    <dialog id="confirmDialog">
+      <form method="dialog">
+        <h2>清除本機快取？</h2>
+        <p>清除後，目前畫面仍保留在記憶體中。下次啟動會重新向 Discord 取得資料。</p>
+        <div class="dialog-actions">
+          <button class="button button-secondary" value="cancel">取消</button>
+          <button id="confirmClear" class="button button-danger" value="confirm">清除</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="removeFriendDialog">
+      <form method="dialog">
+        <h2>移除好友</h2>
+        <p>確定要將 <strong id="removeFriendName"></strong> 從好友名單移除嗎？這會立即更新 Discord。</p>
+        <div class="dialog-actions">
+          <button class="button button-secondary" value="cancel">取消</button>
+          <button class="button button-danger" value="confirm">移除好友</button>
+        </div>
+      </form>
+    </dialog>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <script src="/app.js?v=2" defer></script>
+  </body>
+</html>

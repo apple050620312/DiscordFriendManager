@@ -1,0 +1,435 @@
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+import os
+import secrets
+import sys
+import threading
+import time
+import webbrowser
+from contextlib import contextmanager
+from datetime import UTC, datetime
+from http import HTTPStatus
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from typing import Any, Iterator
+
+import discord
+from discord.enums import RelationshipAction
+from dotenv import dotenv_values
+
+
+ROOT = Path(__file__).resolve().parent
+STATIC_DIR = ROOT / "static"
+CACHE_DIR = ROOT / "cache"
+CACHE_PATH = CACHE_DIR / "relationships.json"
+LOCK_PATH = CACHE_DIR / "fetch.lock"
+CACHE_VERSION = 1
+DISCORD_EPOCH_MS = 1_420_070_400_000
+LOCK_STALE_SECONDS = 300
+
+RELATIONSHIP_TYPES = {
+    0: "none",
+    1: "friend",
+    2: "blocked",
+    3: "incoming_request",
+    4: "outgoing_request",
+    5: "implicit",
+    6: "suggestion",
+}
+
+
+class CacheError(RuntimeError):
+    pass
+
+
+def utc_now() -> str:
+    return datetime.now(UTC).isoformat(timespec="seconds")
+
+
+def account_created_at(user_id: str) -> str | None:
+    try:
+        timestamp_ms = (int(user_id) >> 22) + DISCORD_EPOCH_MS
+        return datetime.fromtimestamp(timestamp_ms / 1000, UTC).isoformat(timespec="seconds")
+    except (ValueError, OSError, OverflowError):
+        return None
+
+
+def avatar_url(user_id: str, avatar_hash: str | None) -> str | None:
+    if not avatar_hash:
+        return None
+    extension = "gif" if avatar_hash.startswith("a_") else "webp"
+    return f"https://cdn.discordapp.com/avatars/{user_id}/{avatar_hash}.{extension}?size=64"
+
+
+def _guild_tag(user: dict[str, Any]) -> str | None:
+    guild = user.get("primary_guild") or user.get("clan") or {}
+    if not isinstance(guild, dict):
+        return None
+    tag = guild.get("tag")
+    return str(tag) if tag else None
+
+
+def normalise_relationship(raw: dict[str, Any]) -> dict[str, Any]:
+    user = raw.get("user") or {}
+    user_id = str(user.get("id") or raw.get("id") or "")
+    relation_type = int(raw.get("type", 0))
+    username = str(user.get("username") or "")
+    global_name = user.get("global_name")
+    nickname = raw.get("nickname")
+
+    return {
+        "id": user_id,
+        "type": relation_type,
+        "type_name": RELATIONSHIP_TYPES.get(relation_type, "unknown"),
+        "username": username,
+        "global_name": str(global_name) if global_name else None,
+        "display_name": str(nickname or global_name or username),
+        "nickname": str(nickname) if nickname else None,
+        "note": str(raw.get("note")) if raw.get("note") else None,
+        "since": raw.get("since"),
+        "account_created_at": account_created_at(user_id),
+        "avatar_url": avatar_url(user_id, user.get("avatar")),
+        "public_flags": int(user.get("public_flags") or 0),
+        "guild_tag": _guild_tag(user),
+        "is_spam_request": bool(raw.get("is_spam_request", False)),
+        "user_ignored": bool(raw.get("user_ignored", False)),
+    }
+
+
+def load_cache() -> dict[str, Any] | None:
+    if not CACHE_PATH.exists():
+        return None
+    try:
+        payload = json.loads(CACHE_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise CacheError(f"無法讀取快取：{exc}") from exc
+    if payload.get("version") != CACHE_VERSION or not isinstance(payload.get("relationships"), list):
+        raise CacheError("快取格式不相容；請明確執行 --clear-cache 後再啟動。")
+    payload["source"] = "cache"
+    return payload
+
+
+def save_cache(relationships: list[dict[str, Any]]) -> dict[str, Any]:
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "version": CACHE_VERSION,
+        "fetched_at": utc_now(),
+        "source": "discord",
+        "relationships": relationships,
+    }
+    write_cache(payload)
+    return payload
+
+
+def write_cache(payload: dict[str, Any]) -> None:
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    temporary = CACHE_PATH.with_suffix(".tmp")
+    temporary.write_text(
+        json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+        encoding="utf-8",
+    )
+    os.replace(temporary, CACHE_PATH)
+
+
+@contextmanager
+def fetch_lock() -> Iterator[None]:
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        descriptor = os.open(LOCK_PATH, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError as exc:
+        try:
+            age = time.time() - LOCK_PATH.stat().st_mtime
+        except OSError:
+            age = 0
+        if age > LOCK_STALE_SECONDS:
+            raise CacheError(
+                "偵測到逾時的抓取鎖。請確認沒有其他執行個體後，執行 --clear-cache。"
+            ) from exc
+        raise CacheError("另一個執行個體正在取得資料，請稍後重新啟動。") from exc
+
+    try:
+        os.write(descriptor, str(os.getpid()).encode("ascii"))
+        os.close(descriptor)
+        yield
+    finally:
+        LOCK_PATH.unlink(missing_ok=True)
+
+
+def read_token() -> str:
+    token = str(dotenv_values(ROOT / ".env").get("TOKEN") or "").strip()
+    if not token:
+        raise RuntimeError(".env 中缺少 TOKEN，或 TOKEN 為空。")
+    return token
+
+
+async def fetch_relationships(token: str) -> list[dict[str, Any]]:
+    # discord.py-self's HTTP client serialises requests and honours Discord's
+    # bucket limits, X-RateLimit headers, and Retry-After values on 429s.
+    client = discord.Client(max_ratelimit_timeout=None)
+    try:
+        await client.login(token)
+        raw_items = await client.http.get_relationships()
+        return [normalise_relationship(item) for item in raw_items]
+    finally:
+        await client.close()
+
+
+class DiscordService:
+    """Runs one lazy Discord client so deletion requests share rate-limit state."""
+
+    def __init__(self) -> None:
+        self._loop = asyncio.new_event_loop()
+        self._thread = threading.Thread(target=self._run_loop, name="discord-http", daemon=True)
+        self._thread.start()
+        self._client: discord.Client | None = None
+        self._async_lock: asyncio.Lock | None = None
+
+    def _run_loop(self) -> None:
+        asyncio.set_event_loop(self._loop)
+        self._loop.run_forever()
+
+    async def _ensure_client(self) -> discord.Client:
+        if self._client is None:
+            client = discord.Client(max_ratelimit_timeout=None)
+            await client.login(read_token())
+            self._client = client
+        return self._client
+
+    async def _remove_friend(self, user_id: int) -> None:
+        if self._async_lock is None:
+            self._async_lock = asyncio.Lock()
+        async with self._async_lock:
+            client = await self._ensure_client()
+            await client.http.remove_relationship(user_id, action=RelationshipAction.unfriend)
+
+    def remove_friend(self, user_id: str) -> None:
+        if not user_id.isdecimal():
+            raise ValueError("無效的 Discord 使用者 ID。")
+        future = asyncio.run_coroutine_threadsafe(self._remove_friend(int(user_id)), self._loop)
+        future.result(timeout=600)
+
+    async def _close(self) -> None:
+        if self._client is not None:
+            await self._client.close()
+
+    def close(self) -> None:
+        if not self._thread.is_alive():
+            return
+        future = asyncio.run_coroutine_threadsafe(self._close(), self._loop)
+        try:
+            future.result(timeout=10)
+        finally:
+            self._loop.call_soon_threadsafe(self._loop.stop)
+            self._thread.join(timeout=10)
+
+
+def get_data() -> dict[str, Any]:
+    cached = load_cache()
+    if cached is not None:
+        return cached
+
+    with fetch_lock():
+        # Recheck after acquiring the lock in case another process just filled it.
+        cached = load_cache()
+        if cached is not None:
+            return cached
+        token = read_token()
+        relationships = asyncio.run(fetch_relationships(token))
+        token = ""
+        return save_cache(relationships)
+
+
+def clear_cache() -> bool:
+    removed = False
+    for path in (CACHE_PATH, CACHE_PATH.with_suffix(".tmp"), LOCK_PATH):
+        if path.exists():
+            path.unlink()
+            removed = True
+    try:
+        CACHE_DIR.rmdir()
+    except OSError:
+        pass
+    return removed
+
+
+class DashboardHandler(SimpleHTTPRequestHandler):
+    server_version = "DiscordFriendAnalyze/1.0"
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, directory=str(STATIC_DIR), **kwargs)
+
+    @property
+    def dashboard_server(self) -> "DashboardServer":
+        return self.server  # type: ignore[return-value]
+
+    def log_message(self, format: str, *args: Any) -> None:
+        if self.path.startswith("/api/") and args and str(args[1]) != "200":
+            super().log_message(format, *args)
+
+    def _json(self, payload: Any, status: HTTPStatus = HTTPStatus.OK) -> None:
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self) -> None:
+        if self.path == "/api/relationships":
+            self._json(self.dashboard_server.payload)
+            return
+        if self.path == "/api/status":
+            data = self.dashboard_server.payload
+            self._json(
+                {
+                    "source": data["source"],
+                    "fetched_at": data["fetched_at"],
+                    "count": len(data["relationships"]),
+                    "csrf_token": self.dashboard_server.csrf_token,
+                }
+            )
+            return
+        super().do_GET()
+
+    def do_DELETE(self) -> None:
+        supplied = self.headers.get("X-CSRF-Token", "")
+        if not secrets.compare_digest(supplied, self.dashboard_server.csrf_token):
+            self._json({"error": "拒絕未授權的本機請求。"}, HTTPStatus.FORBIDDEN)
+            return
+
+        if self.path.startswith("/api/relationships/"):
+            user_id = self.path.removeprefix("/api/relationships/")
+            try:
+                removed = self.dashboard_server.remove_friend(user_id)
+            except ValueError as exc:
+                self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+                return
+            except TimeoutError:
+                self._json(
+                    {"error": "Discord 回應逾時；請先在 Discord 確認好友狀態再重試。"},
+                    HTTPStatus.GATEWAY_TIMEOUT,
+                )
+                return
+            except discord.HTTPException as exc:
+                self._json(
+                    {"error": f"Discord 拒絕刪除請求（HTTP {exc.status}）。"},
+                    HTTPStatus.BAD_GATEWAY,
+                )
+                return
+            except (OSError, RuntimeError) as exc:
+                self._json({"error": f"刪除失敗：{exc}"}, HTTPStatus.BAD_GATEWAY)
+                return
+            self._json({"removed": removed, "id": user_id})
+            return
+
+        if self.path != "/api/cache":
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+        removed = clear_cache()
+        self._json(
+            {
+                "removed": removed,
+                "message": "快取已清除。請停止並重新啟動程式，以重新向 Discord 取得資料。",
+            }
+        )
+
+
+class DashboardServer(ThreadingHTTPServer):
+    daemon_threads = True
+
+    def __init__(self, address: tuple[str, int], payload: dict[str, Any]) -> None:
+        super().__init__(address, DashboardHandler)
+        self.payload = payload
+        self.csrf_token = secrets.token_urlsafe(32)
+        self.discord_service = DiscordService()
+        self.data_lock = threading.RLock()
+
+    def remove_friend(self, user_id: str) -> bool:
+        with self.data_lock:
+            target = next(
+                (item for item in self.payload["relationships"] if item["id"] == user_id),
+                None,
+            )
+            if target is None:
+                raise ValueError("這位使用者已不在目前資料中。")
+            if target["type_name"] != "friend":
+                raise ValueError("只能用此操作移除好友。")
+
+        self.discord_service.remove_friend(user_id)
+
+        with self.data_lock:
+            before = len(self.payload["relationships"])
+            self.payload["relationships"] = [
+                item for item in self.payload["relationships"] if item["id"] != user_id
+            ]
+            removed = len(self.payload["relationships"]) != before
+            if removed:
+                self.payload["source"] = "cache"
+                self.payload["local_updated_at"] = utc_now()
+                write_cache(self.payload)
+            return removed
+
+    def server_close(self) -> None:
+        self.discord_service.close()
+        super().server_close()
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="本機 Discord 好友排序儀表板")
+    parser.add_argument("--host", default="127.0.0.1", help="監聽位址（預設只限本機）")
+    parser.add_argument("--port", type=int, default=8765, help="監聽連接埠")
+    parser.add_argument("--no-browser", action="store_true", help="不要自動開啟瀏覽器")
+    parser.add_argument(
+        "--clear-cache",
+        action="store_true",
+        help="明確清除本機好友快取後退出，不會立即重新請求",
+    )
+    return parser.parse_args()
+
+
+def main() -> int:
+    args = parse_args()
+    if args.clear_cache:
+        print("快取已清除。" if clear_cache() else "目前沒有快取。")
+        return 0
+
+    if args.host not in {"127.0.0.1", "localhost", "::1"}:
+        print("錯誤：為保護好友資料，伺服器只允許綁定本機位址。", file=sys.stderr)
+        return 2
+
+    print("提醒：使用 user token 自動化可能違反 Discord 服務條款並帶來帳號風險。")
+    try:
+        payload = get_data()
+    except (CacheError, RuntimeError, discord.DiscordException, OSError) as exc:
+        print(f"無法啟動：{exc}", file=sys.stderr)
+        return 1
+
+    source_label = "本機快取" if payload["source"] == "cache" else "Discord（已建立快取）"
+    print(f"已載入 {len(payload['relationships'])} 筆關係，來源：{source_label}")
+
+    try:
+        server = DashboardServer((args.host, args.port), payload)
+    except OSError as exc:
+        print(f"無法啟動本機伺服器：{exc}", file=sys.stderr)
+        return 1
+
+    url = f"http://127.0.0.1:{server.server_port}/"
+    print(f"儀表板：{url}")
+    if not args.no_browser:
+        webbrowser.open(url)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\n已停止。")
+    finally:
+        server.server_close()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
