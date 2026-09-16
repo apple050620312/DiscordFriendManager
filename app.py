@@ -50,8 +50,14 @@ def utc_now() -> str:
 
 
 def account_created_at(user_id: str) -> str | None:
+    return snowflake_created_at(user_id)
+
+
+def snowflake_created_at(snowflake_id: str | None) -> str | None:
+    if not snowflake_id:
+        return None
     try:
-        timestamp_ms = (int(user_id) >> 22) + DISCORD_EPOCH_MS
+        timestamp_ms = (int(snowflake_id) >> 22) + DISCORD_EPOCH_MS
         return datetime.fromtimestamp(timestamp_ms / 1000, UTC).isoformat(timespec="seconds")
     except (ValueError, OSError, OverflowError):
         return None
@@ -91,6 +97,7 @@ def normalise_relationship(raw: dict[str, Any]) -> dict[str, Any]:
         "note": str(raw.get("note")) if raw.get("note") else None,
         "since": raw.get("since"),
         "account_created_at": account_created_at(user_id),
+        "last_message_at": None,
         "avatar_url": avatar_url(user_id, user.get("avatar")),
         "public_flags": int(user.get("public_flags") or 0),
         "guild_tag": _guild_tag(user),
@@ -165,16 +172,63 @@ def read_token() -> str:
     return token
 
 
-async def fetch_relationships(token: str) -> list[dict[str, Any]]:
+async def fetch_discord_snapshot(
+    token: str,
+) -> tuple[list[dict[str, Any]], dict[str, str]]:
     # discord.py-self's HTTP client serialises requests and honours Discord's
     # bucket limits, X-RateLimit headers, and Retry-After values on 429s.
     client = discord.Client(max_ratelimit_timeout=None)
     try:
         await client.login(token)
         raw_items = await client.http.get_relationships()
-        return [normalise_relationship(item) for item in raw_items]
+        channels = await client.http.get_private_channels()
+        relationships = [normalise_relationship(item) for item in raw_items]
+        return relationships, private_channel_activity(channels)
     finally:
         await client.close()
+
+
+def private_channel_activity(channels: list[dict[str, Any]]) -> dict[str, str]:
+    activity: dict[str, str] = {}
+    for channel in channels:
+        if int(channel.get("type", 0)) != 1:
+            continue
+        recipients = channel.get("recipients") or []
+        if len(recipients) != 1:
+            continue
+        recipient_id = str(recipients[0].get("id") or "")
+        timestamp = snowflake_created_at(str(channel.get("last_message_id") or ""))
+        if recipient_id and timestamp and timestamp > activity.get(recipient_id, ""):
+            activity[recipient_id] = timestamp
+    return activity
+
+
+async def fetch_private_activity(token: str) -> dict[str, str]:
+    client = discord.Client(max_ratelimit_timeout=None)
+    try:
+        await client.login(token)
+        channels = await client.http.get_private_channels()
+        return private_channel_activity(channels)
+    finally:
+        await client.close()
+
+
+def enrich_private_activity(payload: dict[str, Any]) -> dict[str, Any]:
+    if payload.get("dm_activity_fetched_at"):
+        return payload
+
+    activity = asyncio.run(fetch_private_activity(read_token()))
+    return apply_private_activity(payload, activity)
+
+
+def apply_private_activity(
+    payload: dict[str, Any], activity: dict[str, str]
+) -> dict[str, Any]:
+    for relationship in payload["relationships"]:
+        relationship["last_message_at"] = activity.get(relationship["id"])
+    payload["dm_activity_fetched_at"] = utc_now()
+    write_cache(payload)
+    return payload
 
 
 class DiscordService:
@@ -228,18 +282,20 @@ class DiscordService:
 
 def get_data() -> dict[str, Any]:
     cached = load_cache()
-    if cached is not None:
+    if cached is not None and cached.get("dm_activity_fetched_at"):
         return cached
 
     with fetch_lock():
         # Recheck after acquiring the lock in case another process just filled it.
         cached = load_cache()
         if cached is not None:
-            return cached
+            return enrich_private_activity(cached)
         token = read_token()
-        relationships = asyncio.run(fetch_relationships(token))
+        relationships, activity = asyncio.run(fetch_discord_snapshot(token))
+        payload = save_cache(relationships)
+        payload = apply_private_activity(payload, activity)
         token = ""
-        return save_cache(relationships)
+        return payload
 
 
 def clear_cache() -> bool:

@@ -76,6 +76,7 @@ select option { background: var(--sidebar); }
 .list-meta, .pagination { min-height: 42px; display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--muted); font-size: .75rem; }
 .list-meta { border-bottom: 1px solid var(--line); text-transform: uppercase; font-weight: 700; }
 .rows { display: grid; }
+.column-header { min-height: 32px; display: grid; grid-template-columns: minmax(230px, 1.5fr) minmax(105px, .65fr) minmax(135px, .82fr) minmax(135px, .82fr) minmax(130px, 1fr) 118px; gap: 14px; align-items: center; padding: 6px 10px; color: var(--muted); border-bottom: 1px solid var(--line); font-size: .67rem; font-weight: 750; text-transform: uppercase; }
 .friend-row { min-height: 62px; display: grid; grid-template-columns: minmax(230px, 1.5fr) minmax(105px, .65fr) minmax(135px, .82fr) minmax(135px, .82fr) minmax(130px, 1fr) 118px; gap: 14px; align-items: center; padding: 8px 10px; border-bottom: 1px solid var(--line); }
 .friend-row:hover { background: var(--hover); border-radius: 8px; border-bottom-color: transparent; }
 .user { min-width: 0; display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 11px; align-items: center; }
@@ -134,8 +135,9 @@ dialog p { margin: 12px 0 22px; color: #b5bac1; line-height: 1.55; }
   .notice { align-items: flex-start; flex-direction: column; }
   .controls { grid-template-columns: 1fr; }
   .friend-list { min-width: 0; }
+  .column-header { display: none; }
   .friend-row { grid-template-columns: minmax(0, 1fr) auto 94px; gap: 8px; padding-inline: 4px; }
-  .since-cell, .created-cell, .note-cell { display: none; }
+  .since-cell, .created-cell, .last-message-cell { display: none; }
   .remove-friend { visibility: visible; padding-inline: 7px; }
   .user { grid-template-columns: 36px minmax(0, 1fr); gap: 9px; }
   .avatar-wrap, .avatar, .avatar-fallback { width: 36px; height: 36px; }

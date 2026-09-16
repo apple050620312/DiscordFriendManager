@@ -31,7 +31,27 @@ class RelationshipTests(unittest.TestCase):
         self.assertEqual(item["type_name"], "friend")
         self.assertEqual(item["guild_tag"], "TEST")
         self.assertEqual(item["account_created_at"], "2016-04-30T11:18:25+00:00")
+        self.assertIsNone(item["last_message_at"])
         self.assertNotIn("token", item)
+
+    def test_private_channel_activity_maps_last_message_to_recipient(self) -> None:
+        activity = app.private_channel_activity(
+            [
+                {
+                    "type": 1,
+                    "last_message_id": "175928847299117063",
+                    "recipients": [{"id": "123"}],
+                },
+                {
+                    "type": 3,
+                    "last_message_id": "175928847299117064",
+                    "recipients": [{"id": "456"}, {"id": "789"}],
+                },
+                {"type": 1, "last_message_id": None, "recipients": [{"id": "999"}]},
+            ]
+        )
+
+        self.assertEqual(activity, {"123": "2016-04-30T11:18:25+00:00"})
 
     def test_cache_round_trip_is_cache_first(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -50,6 +70,23 @@ class RelationshipTests(unittest.TestCase):
             self.assertEqual(loaded["source"], "cache")
             self.assertEqual(loaded["relationships"], [{"id": "1"}])
             self.assertNotIn("TOKEN", json.dumps(loaded))
+
+    def test_get_data_does_not_refetch_completed_dm_activity(self) -> None:
+        cached = {
+            "version": app.CACHE_VERSION,
+            "source": "cache",
+            "fetched_at": "2026-01-01T00:00:00+00:00",
+            "dm_activity_fetched_at": "2026-01-01T00:01:00+00:00",
+            "relationships": [{"id": "123", "last_message_at": None}],
+        }
+        with (
+            patch.object(app, "load_cache", return_value=cached),
+            patch.object(app, "fetch_private_activity") as fetch_activity,
+        ):
+            result = app.get_data()
+
+        self.assertIs(result, cached)
+        fetch_activity.assert_not_called()
 
     def test_remove_friend_updates_cache_only_after_remote_success(self) -> None:
         payload = {

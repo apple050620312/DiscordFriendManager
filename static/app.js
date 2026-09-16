@@ -108,7 +108,7 @@ function renderRows() {
         <div class="cell relation-cell"><span class="relation ${escapeHtml(item.type_name)}">${escapeHtml(TYPE_LABELS[item.type_name] || "未知")}</span></div>
         <div class="cell since-cell">${escapeHtml(formatDate(item.since))}</div>
         <div class="cell created-cell">${escapeHtml(formatDate(item.account_created_at))}</div>
-        <div class="cell note note-cell" title="${escapeHtml(item.note || "")}">${escapeHtml(item.note || "—")}</div>
+        <div class="cell last-message-cell">${escapeHtml(formatDate(item.last_message_at))}</div>
         <div class="row-actions">
           ${item.type_name === "friend" ? `<button class="remove-friend" type="button" data-remove-id="${escapeHtml(item.id)}" title="按住 Shift 可跳過確認">移除好友</button>` : `<span class="cell flags" title="${escapeHtml(flagNames(item.public_flags))}">${escapeHtml(item.guild_tag || flagNames(item.public_flags))}</span>`}
         </div>
@@ -149,10 +149,10 @@ function csvCell(value) {
 }
 
 function exportCsv() {
-  const headers = ["ID", "顯示名稱", "使用者名稱", "關係", "成為好友時間", "帳號建立時間", "自訂暱稱", "備註", "Guild Tag", "公開旗標"];
+  const headers = ["ID", "顯示名稱", "使用者名稱", "關係", "成為好友時間", "帳號建立時間", "最後講過話", "自訂暱稱", "備註", "Guild Tag", "公開旗標"];
   const rows = state.filtered.map((item) => [
     item.id, item.display_name, item.username, TYPE_LABELS[item.type_name] || item.type_name,
-    item.since, item.account_created_at, item.nickname, item.note, item.guild_tag,
+    item.since, item.account_created_at, item.last_message_at, item.nickname, item.note, item.guild_tag,
     flagNames(item.public_flags),
   ]);
   const csv = "\ufeff" + [headers, ...rows].map((row) => row.map(csvCell).join(",")).join("\r\n");
