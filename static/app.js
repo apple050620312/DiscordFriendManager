@@ -23,6 +23,31 @@ const OPERATION_STATUS_LABELS = { pending: "處理中", completed: "已完成", 
 const $ = (selector) => document.querySelector(selector);
 const now = () => new Date().toISOString();
 
+function logDiagnostic(entry) {
+  console.info("[Discord Friend Manager]", { ...entry });
+}
+
+async function runPublicProbe() {
+  logDiagnostic({
+    time: now(), event: "public_probe", path: "/gateway", origin: location.origin,
+    online: navigator.onLine, user_agent: navigator.userAgent,
+  });
+  try {
+    const response = await fetch("https://discord.com/api/v10/gateway", {
+      mode: "cors", credentials: "omit", cache: "no-store", referrerPolicy: "no-referrer",
+    });
+    logDiagnostic({
+      time: now(), event: "public_probe_response", path: "/gateway",
+      status: response.status, response_type: response.type,
+    });
+  } catch (error) {
+    logDiagnostic({
+      time: now(), event: "public_probe_error", path: "/gateway",
+      error_name: error?.name || "Error", error_message: error?.message || String(error),
+    });
+  }
+}
+
 function escapeHtml(value) {
   return String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
@@ -418,7 +443,7 @@ async function connect(event) {
   const token = tokenInput.value.trim();
   if (!token) return;
   tokenInput.value = "";
-  state.api = new DiscordApi(token);
+  state.api = new DiscordApi(token, fetch, logDiagnostic);
   button.disabled = true;
   button.textContent = "連線中…";
   errorNode.hidden = true;
@@ -429,6 +454,7 @@ async function connect(event) {
     if (!state.all.length) await refreshRelationships();
     showToast("Token 僅保存在此分頁記憶體，關閉或重新整理後會忘記。");
   } catch (error) {
+    await runPublicProbe();
     forgetToken();
     errorNode.textContent = error.status === 401 ? "Token 無效或已失效。" : error.message;
     errorNode.hidden = false;

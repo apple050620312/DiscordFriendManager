@@ -5,13 +5,14 @@ import { DiscordApi, DiscordApiError } from "../static/discord-api.js";
 
 test("adds the in-memory token only to Discord requests", async () => {
   const calls = [];
+  const events = [];
   const api = new DiscordApi("secret-token", async (url, options) => {
     calls.push({ url, options });
     return new Response(JSON.stringify({ id: "1" }), {
       status: 200,
       headers: { "Content-Type": "application/json" },
     });
-  });
+  }, (event) => events.push(event));
 
   await api.currentUser();
 
@@ -20,6 +21,8 @@ test("adds the in-memory token only to Discord requests", async () => {
   assert.equal(calls[0].options.headers.Authorization, "secret-token");
   assert.equal(calls[0].options.credentials, "omit");
   assert.equal(calls[0].options.referrerPolicy, "no-referrer");
+  assert.deepEqual(events.map((event) => event.event), ["request", "response"]);
+  assert.equal(JSON.stringify(events).includes("secret-token"), false);
 });
 
 test("retries a 429 using retry_after", async () => {

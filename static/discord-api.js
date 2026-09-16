@@ -27,12 +27,14 @@ async function responseBody(response) {
 export class DiscordApi {
   #token;
   #fetch;
+  #logger;
   #queue = Promise.resolve();
   #readyAt = 0;
 
-  constructor(token, fetchImplementation = fetch) {
+  constructor(token, fetchImplementation = fetch, logger = () => {}) {
     this.#token = token;
     this.#fetch = fetchImplementation;
+    this.#logger = logger;
   }
 
   clearToken() {
@@ -46,12 +48,26 @@ export class DiscordApi {
     return pending;
   }
 
+  #log(event, path, details = {}) {
+    try {
+      this.#logger({
+        time: new Date().toISOString(),
+        event,
+        path: path.replace(/\d{10,}/g, ":id"),
+        ...details,
+      });
+    } catch {
+      // Diagnostics must never interrupt an API request.
+    }
+  }
+
   async #request(path, { method = "GET", body } = {}) {
     for (let attempt = 0; attempt < 8; attempt += 1) {
       const wait = this.#readyAt - Date.now();
       if (wait > 0) await sleep(wait);
 
       let response;
+      this.#log("request", path, { method, attempt: attempt + 1 });
       try {
         response = await this.#fetch(`${API_BASE}${path}`, {
           method,
@@ -66,7 +82,15 @@ export class DiscordApi {
           body: body === undefined ? undefined : JSON.stringify(body),
         });
       } catch (error) {
+        this.#log("network_error", path, {
+          method,
+          attempt: attempt + 1,
+          error_name: error?.name || "Error",
+          error_message: error?.message || String(error),
+          online: typeof navigator === "undefined" ? null : navigator.onLine,
+        });
         if (attempt === 0) {
+          this.#log("retry_wait", path, { milliseconds: 500 });
           await sleep(500);
           continue;
         }
@@ -76,6 +100,13 @@ export class DiscordApi {
       }
 
       const payload = await responseBody(response);
+      this.#log("response", path, {
+        method,
+        attempt: attempt + 1,
+        status: response.status,
+        response_type: response.type,
+        redirected: response.redirected,
+      });
       if (response.status === 429) {
         const retryHeader = Number(response.headers.get("Retry-After"));
         const retryBody = Number(payload?.retry_after);
@@ -83,6 +114,7 @@ export class DiscordApi {
           ? retryHeader
           : (Number.isFinite(retryBody) && retryBody > 0 ? retryBody : 1);
         this.#readyAt = Date.now() + Math.ceil(retrySeconds * 1000) + 100;
+        this.#log("rate_limit_wait", path, { retry_seconds: retrySeconds });
         continue;
       }
 
