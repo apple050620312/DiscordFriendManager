@@ -6,27 +6,35 @@
     <meta name="color-scheme" content="dark">
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src https://discord.com; img-src 'self' data: https://cdn.discordapp.com https://*.discordapp.com; script-src 'self'; style-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
     <title>Discord 好友管理</title>
-    <link rel="icon" href="./logo.svg" type="image/svg+xml">
-    <link rel="stylesheet" href="./styles.css?v=18">
+    <link rel="stylesheet" href="./vendor/fontawesome/css/fontawesome.min.css">
+    <link rel="stylesheet" href="./vendor/fontawesome/css/solid.min.css">
+    <link rel="stylesheet" href="./styles.css?v=21">
   </head>
   <body>
     <div class="app-shell">
       <aside class="server-rail" aria-label="工具列">
-        <button id="projectInfoButton" class="server-mark" type="button" data-tooltip="Discord Friend Manager" aria-label="專案資訊"><img src="./logo.svg" alt=""></button>
+        <button id="projectInfoButton" class="server-mark rail-icon active" type="button" data-tooltip="首頁" aria-label="首頁"><i class="fa-solid fa-comments" aria-hidden="true"></i></button>
         <div class="rail-divider"></div>
-        <button id="friendsWorkspaceButton" class="rail-icon active" type="button" data-tooltip="好友管理" aria-label="好友管理"><svg class="rail-glyph" aria-hidden="true"><use href="./icons.svg#users-round"></use></svg></button>
-        <button id="operationsWorkspaceButton" class="rail-icon" type="button" data-tooltip="操作紀錄" aria-label="操作紀錄"><svg class="rail-glyph" aria-hidden="true"><use href="./icons.svg#history"></use></svg></button>
+        <button id="friendsWorkspaceButton" class="rail-icon" type="button" data-tooltip="好友管理" aria-label="好友管理"><i class="fa-solid fa-user-group" aria-hidden="true"></i></button>
+        <button id="operationsWorkspaceButton" class="rail-icon" type="button" data-tooltip="操作紀錄" aria-label="操作紀錄"><i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i></button>
+        <button id="dataWorkspaceButton" class="rail-icon" type="button" data-tooltip="資料管理" aria-label="資料管理"><i class="fa-solid fa-database" aria-hidden="true"></i></button>
       </aside>
 
       <aside class="sidebar">
-        <div id="sidebarTitle" class="sidebar-title">好友管理</div>
+        <div id="sidebarTitle" class="sidebar-title">Discord Friend Manager</div>
         <div class="sidebar-body">
-        <nav id="friendsSidebar" class="sidebar-nav" aria-label="好友資料檢視">
-          <button class="nav-item active" type="button"><span class="nav-symbol">☷</span>所有關係</button>
-          <button id="friendsNav" class="nav-item" type="button"><span class="nav-symbol">♟</span>好友</button>
-          <button id="outgoingNav" class="nav-item" type="button"><span class="nav-symbol">＋</span>送出的邀請</button>
+        <nav id="homeSidebar" class="sidebar-nav" aria-label="首頁導覽">
+          <button class="nav-item active" data-home-target="homeStart" type="button"><span class="nav-symbol"><i class="fa-solid fa-house" aria-hidden="true"></i></span>開始使用</button>
+          <button class="nav-item" data-home-target="homeTokenGuide" type="button"><span class="nav-symbol"><i class="fa-solid fa-key" aria-hidden="true"></i></span>Token 教學</button>
+          <button class="nav-item" data-home-target="homePrivacy" type="button"><span class="nav-symbol"><i class="fa-solid fa-shield-halved" aria-hidden="true"></i></span>隱私與安全</button>
+          <button class="nav-item" data-home-target="homeSource" type="button"><span class="nav-symbol"><i class="fa-solid fa-code" aria-hidden="true"></i></span>原始碼</button>
         </nav>
-        <div id="sidebarFilters" class="sidebar-filters">
+        <nav id="friendsSidebar" class="sidebar-nav" aria-label="好友資料檢視" hidden>
+          <button class="nav-item active" type="button"><span class="nav-symbol"><i class="fa-solid fa-address-book" aria-hidden="true"></i></span>所有關係</button>
+          <button id="friendsNav" class="nav-item" type="button"><span class="nav-symbol"><i class="fa-solid fa-user-group" aria-hidden="true"></i></span>好友</button>
+          <button id="outgoingNav" class="nav-item" type="button"><span class="nav-symbol"><i class="fa-solid fa-user-plus" aria-hidden="true"></i></span>送出的邀請</button>
+        </nav>
+        <div id="sidebarFilters" class="sidebar-filters" hidden>
           <label>
             <span>關係</span>
             <select id="typeFilter">
@@ -63,19 +71,26 @@
           </label>
         </div>
         <nav id="operationsSidebar" class="sidebar-nav" aria-label="操作紀錄篩選" hidden>
-          <button class="nav-item active" data-operation-filter="all" type="button"><span class="nav-symbol">☷</span>全部紀錄</button>
-          <button class="nav-item" data-operation-filter="remove_friend" type="button"><span class="nav-symbol">−</span>移除好友</button>
-          <button class="nav-item" data-operation-filter="send_friend_request" type="button"><span class="nav-symbol">＋</span>好友邀請</button>
+          <button class="nav-item active" data-operation-filter="all" type="button"><span class="nav-symbol"><i class="fa-solid fa-list" aria-hidden="true"></i></span>全部紀錄</button>
+          <button class="nav-item" data-operation-filter="remove_friend" type="button"><span class="nav-symbol"><i class="fa-solid fa-user-minus" aria-hidden="true"></i></span>移除好友</button>
+          <button class="nav-item" data-operation-filter="send_friend_request" type="button"><span class="nav-symbol"><i class="fa-solid fa-user-plus" aria-hidden="true"></i></span>好友邀請</button>
         </nav>
-        <div class="sidebar-heading">本機資料</div>
-        <div class="cache-panel">
-          <span id="sourceBadge" class="badge">尚未連線</span>
-          <span id="fetchedAt">—</span>
-          <div class="session-actions">
-            <button id="refreshButton" class="sidebar-action" type="button">重新整理</button>
+        <nav id="dataSidebar" class="sidebar-nav" aria-label="資料管理導覽" hidden>
+          <button class="nav-item active" data-data-target="dataBackup" type="button"><span class="nav-symbol"><i class="fa-solid fa-file-arrow-down" aria-hidden="true"></i></span>備份與還原</button>
+          <button class="nav-item" data-data-target="dataStorage" type="button"><span class="nav-symbol"><i class="fa-solid fa-hard-drive" aria-hidden="true"></i></span>本機資料</button>
+          <button class="nav-item" data-data-target="dataDanger" type="button"><span class="nav-symbol"><i class="fa-solid fa-trash" aria-hidden="true"></i></span>清除資料</button>
+        </nav>
+        <div id="dataSidebarStatus" hidden>
+          <div class="sidebar-heading">資料來源</div>
+          <div class="cache-panel">
+            <span id="sourceBadge" class="badge">尚未連線</span>
+            <span id="fetchedAt">—</span>
+            <div class="session-actions">
+              <button id="refreshButton" class="sidebar-action" type="button">從 Discord 重新整理</button>
+            </div>
           </div>
         </div>
-        <div id="sidebarScan">
+        <div id="friendSidebarTools" hidden>
           <div class="sidebar-heading">最後訊息時間</div>
           <div class="sidebar-scan">
             <div class="sidebar-scan-line">
@@ -90,10 +105,6 @@
             </div>
           </div>
         </div>
-        <div class="sidebar-footer">
-          <button id="exportButton" class="sidebar-action" type="button">匯出 CSV</button>
-          <button id="clearCacheButton" class="sidebar-action danger-text" type="button">清除快取</button>
-        </div>
         </div>
         <div id="sessionPanel" class="session-panel">
           <div class="session-avatar" aria-hidden="true">
@@ -106,9 +117,8 @@
             <span id="sessionHandle">Token 未載入</span>
           </div>
           <div class="session-controls">
-            <button id="accountPrivacyButton" class="session-button" type="button" title="隱私與安全" aria-label="隱私與安全"><svg aria-hidden="true"><use href="./icons.svg#settings"></use></svg></button>
-            <button id="loginButton" class="session-button" type="button" title="使用 Token 登入" aria-label="使用 Token 登入"><svg aria-hidden="true"><use href="./icons.svg#log-in"></use></svg></button>
-            <button id="logoutButton" class="session-button danger-text" type="button" title="登出並忘記 Token" aria-label="登出並忘記 Token" hidden><svg aria-hidden="true"><use href="./icons.svg#log-out"></use></svg></button>
+            <button id="loginButton" class="session-button" type="button" title="使用 Token 登入" aria-label="使用 Token 登入"><i class="fa-solid fa-right-to-bracket" aria-hidden="true"></i></button>
+            <button id="logoutButton" class="session-button danger-text" type="button" title="登出並忘記 Token" aria-label="登出並忘記 Token" hidden><i class="fa-solid fa-right-from-bracket" aria-hidden="true"></i></button>
           </div>
         </div>
       </aside>
@@ -116,8 +126,8 @@
       <div class="workspace">
         <header class="topbar">
           <div class="title-group">
-            <span id="workspaceIcon" class="title-icon">♟</span>
-            <h1 id="workspaceTitle">好友</h1>
+            <span class="title-icon"><i id="workspaceIcon" class="fa-solid fa-house" aria-hidden="true"></i></span>
+            <h1 id="workspaceTitle">首頁</h1>
             <span class="title-divider"></span>
             <span id="workspaceSubtitle" class="title-subtitle">排序與整理</span>
           </div>
@@ -130,22 +140,57 @@
         </header>
 
         <main>
-          <section id="connectionBanner" class="connection-banner" aria-label="Discord 連線狀態">
-            <div>
-              <strong>尚未連線 Discord</strong>
-              <span>Token 只存在這個分頁的記憶體，請求由瀏覽器直接送往 Discord，不會傳送到作者的伺服器。</span>
-            </div>
-            <div class="connection-actions">
-              <button id="bannerLoginButton" class="button button-primary" type="button">使用 Token 登入</button>
-              <button id="tokenHelpButton" class="button button-secondary" type="button">如何取得 Token</button>
-            </div>
-          </section>
-          <div id="friendsView">
-            <section class="notice" aria-label="風險提醒">
-              <strong>帳號風險</strong>
-              <span>使用 user token 自動化可能違反 Discord 服務條款，即使只讀或低頻操作仍有停權風險。</span>
+          <section id="homeView" class="home-view" aria-label="首頁">
+            <section id="homeStart" class="home-intro">
+              <div class="home-logo" aria-hidden="true"><i class="fa-solid fa-comments"></i></div>
+              <div>
+                <span class="home-eyebrow">開放原始碼瀏覽器工具</span>
+                <h2>Discord Friend Manager</h2>
+                <p>整理、排序與檢視 Discord 好友關係，所有 API 請求都由你的瀏覽器直接送往 Discord。</p>
+                <div class="home-actions">
+                  <button id="homeLoginButton" class="button button-primary" type="button">使用 Token 登入</button>
+                  <span id="homeConnectionStatus" class="home-connection">尚未登入</span>
+                </div>
+              </div>
             </section>
 
+            <section class="notice" aria-label="風險提醒">
+              <strong>帳號風險</strong>
+              <span>使用 user token 自動化可能違反 Discord 服務條款，即使只讀或低頻操作仍有停權風險。本工具不是 Discord 官方產品。</span>
+            </section>
+
+            <section id="homeTokenGuide" class="home-section">
+              <span class="section-kicker">開始使用</span>
+              <h2>取得 Discord user token</h2>
+              <p>Token 等同帳號登入憑證。只在自己的裝置操作，不要傳給任何人或貼到公開場所。</p>
+              <ol class="guide-steps">
+                <li><strong>登入網頁版 Discord</strong><span>在一般瀏覽器開啟 Discord 並完成登入。</span></li>
+                <li><strong>開啟開發者工具</strong><span>按 F12，切換到「網路」或「Network」分頁。</span></li>
+                <li><strong>找到自己的請求</strong><span>重新整理 Discord，搜尋 <code>users/@me</code>。</span></li>
+                <li><strong>複製 Authorization</strong><span>在請求標頭找到 <code>Authorization</code>，只將它的值貼入本工具。</span></li>
+              </ol>
+            </section>
+
+            <section id="homePrivacy" class="home-section">
+              <span class="section-kicker">資料流</span>
+              <h2>隱私與安全</h2>
+              <ul class="privacy-list">
+                <li><strong>Token</strong><span>只保留在目前分頁記憶體，重新整理、登出或關閉分頁後即消失，也不會進入備份檔。</span></li>
+                <li><strong>Discord 請求</strong><span>由瀏覽器直接傳送到 <code>discord.com</code>，不經過作者控制的伺服器。</span></li>
+                <li><strong>本機資料</strong><span>好友快取與操作紀錄只寫入此瀏覽器的 IndexedDB，可在資料管理頁匯出或清除。</span></li>
+                <li><strong>網站連線</strong><span>GitHub Pages 仍會收到一般網站連線資料，例如 IP 位址與瀏覽器資訊。</span></li>
+              </ul>
+            </section>
+
+            <section id="homeSource" class="home-section home-source">
+              <span class="section-kicker">透明可驗證</span>
+              <h2>完整原始碼</h2>
+              <p>程式碼與部署設定公開在 GitHub，可直接確認 Token、快取與 API 請求的處理方式。</p>
+              <a class="button source-button" href="https://github.com/apple050620312/DiscordFriendManager" target="_blank" rel="noopener noreferrer">GitHub · apple050620312/DiscordFriendManager</a>
+            </section>
+          </section>
+
+          <div id="friendsView" hidden>
             <section class="summary" aria-label="資料摘要">
             <div class="metric"><span>全部關係</span><strong id="totalCount">—</strong></div>
             <div class="metric"><span>好友</span><strong id="friendCount">—</strong></div>
@@ -194,6 +239,39 @@
             </div>
             <div id="operationRows" class="operation-rows"></div>
           </section>
+
+          <section id="dataView" class="data-view" aria-label="資料管理" hidden>
+            <section id="dataBackup" class="data-section">
+              <span class="section-kicker">單檔備份</span>
+              <h2>匯出與還原</h2>
+              <p>備份檔包含好友快取、最後訊息掃描結果與操作紀錄，不包含 Token。未登入也可以匯入並檢視資料。</p>
+              <div class="data-actions">
+                <button id="exportBackupButton" class="button button-primary" type="button">匯出完整備份</button>
+                <label class="button button-secondary file-button" for="importBackupInput">匯入備份</label>
+                <input id="importBackupInput" class="sr-only" type="file" accept="application/json,.json">
+                <button id="exportButton" class="button button-secondary" type="button">匯出目前列表 CSV</button>
+              </div>
+              <p id="dataImportStatus" class="data-status" role="status">支援 Discord Friend Manager backup v1。</p>
+            </section>
+
+            <section id="dataStorage" class="data-section">
+              <span class="section-kicker">IndexedDB</span>
+              <h2>目前本機資料</h2>
+              <div class="data-metrics">
+                <div><strong id="dataRelationshipCount">0</strong><span>好友關係</span></div>
+                <div><strong id="dataScannedCount">0</strong><span>已掃描訊息時間</span></div>
+                <div><strong id="dataOperationCount">0</strong><span>操作紀錄</span></div>
+              </div>
+            </section>
+
+            <section id="dataDanger" class="data-section danger-zone">
+              <span class="section-kicker">本機清除</span>
+              <h2>刪除瀏覽器資料</h2>
+              <p>兩類資料分開管理。清除好友快取不會刪除操作紀錄。</p>
+              <div class="danger-row"><div><strong>好友快取</strong><span>好友、關係時間與最後訊息掃描結果</span></div><button id="clearCacheButton" class="button button-danger" type="button">清除好友快取</button></div>
+              <div class="danger-row"><div><strong>操作紀錄</strong><span>移除好友與重新邀請的本機歷程</span></div><button id="clearOperationsButton" class="button button-danger" type="button">清除操作紀錄</button></div>
+            </section>
+          </section>
         </main>
       </div>
     </div>
@@ -207,16 +285,6 @@
           <input id="tokenInput" type="password" placeholder="貼上 Discord user token" autocomplete="off" autocapitalize="off" spellcheck="false" required>
         </label>
         <p id="tokenError" class="form-error" role="alert" hidden></p>
-        <details id="tokenGuide" class="token-guide">
-          <summary>如何取得 Discord user token</summary>
-          <ol>
-            <li>在瀏覽器開啟 Discord 網頁版並登入。</li>
-            <li>按 F12 開啟開發者工具，切換到「網路」或「Network」。</li>
-            <li>重新整理 Discord，搜尋 <code>users/@me</code> 請求。</li>
-            <li>在請求標頭找到 <code>Authorization</code>，只把值貼在上方欄位。</li>
-          </ol>
-          <p>不要把 Token 傳給任何人或貼到公開場所。使用 user token 自動化可能違反 Discord 服務條款，請自行評估帳號風險。</p>
-        </details>
         <div class="dialog-actions">
           <button id="cancelTokenButton" class="button button-secondary" type="button">稍後再說</button>
           <button id="connectButton" class="button button-primary" type="submit">連線</button>
@@ -227,7 +295,7 @@
     <dialog id="confirmDialog">
       <form method="dialog">
         <h2>清除本機快取？</h2>
-        <p>清除後，目前畫面仍保留在記憶體中。下次啟動會重新向 Discord 取得資料。</p>
+        <p>這會刪除好友、關係時間與最後訊息掃描結果。操作紀錄不受影響。</p>
         <div class="dialog-actions">
           <button class="button button-secondary" value="cancel">取消</button>
           <button id="confirmClear" class="button button-danger" value="confirm">清除</button>
@@ -235,37 +303,24 @@
       </form>
     </dialog>
 
-    <dialog id="privacyDialog" class="privacy-dialog">
+    <dialog id="clearOperationsDialog">
       <form method="dialog">
-        <h2>隱私與安全</h2>
-        <p>這是一個完全在瀏覽器執行的開放原始碼工具，沒有作者控制的後端伺服器。</p>
-        <ul class="privacy-list">
-          <li><strong>Token</strong><span>只保留在目前分頁的記憶體，重新整理、登出或關閉分頁後即消失。</span></li>
-          <li><strong>Discord 請求</strong><span>由你的瀏覽器直接傳送到 <code>discord.com</code>，不會經過作者的伺服器。</span></li>
-          <li><strong>本機資料</strong><span>好友快取與操作紀錄只寫入此瀏覽器的 IndexedDB，可隨時清除好友快取。</span></li>
-          <li><strong>網站連線</strong><span>GitHub Pages 仍會收到一般網站連線資料，例如 IP 位址與瀏覽器資訊。</span></li>
-        </ul>
+        <h2>清除操作紀錄？</h2>
+        <p>這會永久刪除此瀏覽器中的移除好友與重新邀請歷程，不會變更 Discord 上的好友狀態。</p>
         <div class="dialog-actions">
-          <button class="button button-primary" value="close">了解</button>
+          <button class="button button-secondary" value="cancel">取消</button>
+          <button class="button button-danger" value="confirm">清除</button>
         </div>
       </form>
     </dialog>
 
-    <dialog id="projectDialog" class="project-dialog">
+    <dialog id="importDialog">
       <form method="dialog">
-        <div class="project-brand">
-          <img class="project-logo" src="./logo.svg" alt="">
-          <div><h2>Discord Friend Manager</h2><p>在瀏覽器整理、排序與管理 Discord 好友關係。</p></div>
-        </div>
-        <div class="project-facts">
-          <span>完全在瀏覽器執行</span>
-          <span>Token 不離開目前分頁</span>
-          <span>開放原始碼</span>
-        </div>
-        <p>本工具不是 Discord 官方產品。使用 user token 自動化可能違反 Discord 服務條款，請自行評估帳號風險。</p>
-        <a href="https://github.com/apple050620312/DiscordFriendManager" target="_blank" rel="noopener noreferrer">GitHub · apple050620312/DiscordFriendManager</a>
+        <h2>匯入並取代本機資料？</h2>
+        <p id="importSummary">已驗證備份檔。</p>
         <div class="dialog-actions">
-          <button class="button button-primary" value="close">關閉</button>
+          <button class="button button-secondary" value="cancel">取消</button>
+          <button class="button button-primary" value="confirm">匯入</button>
         </div>
       </form>
     </dialog>
@@ -304,6 +359,6 @@
     </dialog>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script src="./app.js?v=18" type="module"></script>
+    <script src="./app.js?v=21" type="module"></script>
   </body>
 </html>

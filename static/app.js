@@ -1,11 +1,12 @@
 import { deleteLocal, readLocal, writeLocal } from "./db.js";
 import { DiscordApi, DiscordApiError } from "./discord-api.js?v=13";
+import { createBackup, parseBackup } from "./backup.js?v=21";
 
 const state = {
   api: null, currentUser: null, all: [], filtered: [], page: 1, pageSize: 100,
   pendingRemoveId: null, removingId: null, scanRunning: false, scanPaused: false,
-  scanError: null, workspace: "friends", operations: [], operationFilter: "all",
-  pendingReaddId: null,
+  scanError: null, workspace: "home", operations: [], operationFilter: "all",
+  pendingReaddId: null, pendingImport: null,
 };
 
 const TYPE_LABELS = {
@@ -196,27 +197,47 @@ function updateConnection() {
   }
   $("#loginButton").hidden = connected;
   $("#logoutButton").hidden = !connected;
-  $("#connectionBanner").hidden = connected;
+  $("#homeLoginButton").hidden = connected;
+  $("#homeConnectionStatus").textContent = connected
+    ? `已登入 @${user.username}`
+    : "尚未登入，仍可匯入並檢視既有備份。";
   $("#refreshButton").disabled = !connected;
 }
 
 function switchWorkspace(workspace) {
   state.workspace = workspace;
+  const isHome = workspace === "home";
   const isFriends = workspace === "friends";
+  const isOperations = workspace === "operations";
+  const isData = workspace === "data";
+  $("#homeView").hidden = !isHome;
   $("#friendsView").hidden = !isFriends;
-  $("#operationsView").hidden = isFriends;
+  $("#operationsView").hidden = !isOperations;
+  $("#dataView").hidden = !isData;
+  $("#homeSidebar").hidden = !isHome;
   $("#friendsSidebar").hidden = !isFriends;
   $("#sidebarFilters").hidden = !isFriends;
-  $("#operationsSidebar").hidden = isFriends;
-  $("#sidebarScan").hidden = !isFriends;
+  $("#friendSidebarTools").hidden = !isFriends;
+  $("#operationsSidebar").hidden = !isOperations;
+  $("#dataSidebar").hidden = !isData;
+  $("#dataSidebarStatus").hidden = !isData;
   $(".header-search").hidden = !isFriends;
+  $("#projectInfoButton").classList.toggle("active", isHome);
   $("#friendsWorkspaceButton").classList.toggle("active", isFriends);
-  $("#operationsWorkspaceButton").classList.toggle("active", !isFriends);
-  $("#sidebarTitle").textContent = isFriends ? "好友管理" : "操作紀錄";
-  $("#workspaceIcon").textContent = isFriends ? "♟" : "≡";
-  $("#workspaceTitle").textContent = isFriends ? "好友" : "操作紀錄";
-  $("#workspaceSubtitle").textContent = isFriends ? "排序與整理" : "刪除與好友邀請歷程";
-  if (!isFriends) renderOperations();
+  $("#operationsWorkspaceButton").classList.toggle("active", isOperations);
+  $("#dataWorkspaceButton").classList.toggle("active", isData);
+  const workspaceMeta = {
+    home: ["Discord Friend Manager", "首頁", "fa-house", "專案、登入與安全資訊"],
+    friends: ["好友管理", "好友", "fa-user-group", "排序與整理"],
+    operations: ["操作紀錄", "操作紀錄", "fa-clock-rotate-left", "刪除與好友邀請歷程"],
+    data: ["資料管理", "資料管理", "fa-database", "備份、匯入與本機儲存"],
+  }[workspace];
+  $("#sidebarTitle").textContent = workspaceMeta[0];
+  $("#workspaceTitle").textContent = workspaceMeta[1];
+  $("#workspaceIcon").className = `fa-solid ${workspaceMeta[2]}`;
+  $("#workspaceSubtitle").textContent = workspaceMeta[3];
+  if (isOperations) renderOperations();
+  if (isData) renderDataSummary();
 }
 
 function renderOperations() {
@@ -243,15 +264,23 @@ function renderOperations() {
   rows.querySelectorAll(".avatar").forEach((image) => image.addEventListener("error", () => image.remove()));
 }
 
+function renderDataSummary() {
+  $("#dataRelationshipCount").textContent = state.all.length.toLocaleString("zh-TW");
+  $("#dataScannedCount").textContent = state.all.filter((item) => item.last_message_checked).length.toLocaleString("zh-TW");
+  $("#dataOperationCount").textContent = state.operations.length.toLocaleString("zh-TW");
+}
+
 async function persistRelationships(source = "cache") {
   const fetchedAt = now();
   await writeLocal("relationships", { version: 1, fetched_at: fetchedAt, relationships: state.all });
   renderSummary(source, fetchedAt);
+  renderDataSummary();
 }
 
 async function persistOperations() {
   await writeLocal("operations", state.operations);
   renderOperations();
+  renderDataSummary();
 }
 
 function getScanStatus() {
@@ -409,15 +438,71 @@ async function readdFriend(operationId) {
 }
 
 function csvCell(value) { return `"${String(value ?? "").replaceAll('"', '""')}"`; }
+function downloadBlob(blob, filename) {
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(link.href);
+}
+
 function exportCsv() {
   const headers = ["ID", "顯示名稱", "使用者名稱", "關係", "成為好友時間", "帳號建立時間", "最後訊息時間", "自訂暱稱", "備註", "Guild Tag", "公開旗標"];
   const rows = state.filtered.map((item) => [item.id, item.display_name, item.username, TYPE_LABELS[item.type_name] || item.type_name, item.since, item.account_created_at, item.last_message_at, item.nickname, item.note, item.guild_tag, flagNames(item.public_flags)]);
   const csv = "\ufeff" + [headers, ...rows].map((row) => row.map(csvCell).join(",")).join("\r\n");
-  const link = document.createElement("a");
-  link.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
-  link.download = `discord-relationships-${new Date().toISOString().slice(0, 10)}.csv`;
-  link.click();
-  URL.revokeObjectURL(link.href);
+  downloadBlob(new Blob([csv], { type: "text/csv;charset=utf-8" }), `discord-relationships-${new Date().toISOString().slice(0, 10)}.csv`);
+}
+
+async function exportBackup() {
+  const stored = await readLocal("relationships");
+  const relationships = stored?.version === 1
+    ? stored
+    : { version: 1, fetched_at: null, relationships: state.all };
+  const backup = createBackup(relationships, state.operations);
+  downloadBlob(
+    new Blob([JSON.stringify(backup, null, 2)], { type: "application/json;charset=utf-8" }),
+    `discord-friend-manager-${new Date().toISOString().slice(0, 10)}.json`,
+  );
+  $("#dataImportStatus").textContent = `已匯出 ${state.all.length.toLocaleString("zh-TW")} 筆關係與 ${state.operations.length.toLocaleString("zh-TW")} 筆操作紀錄。`;
+}
+
+async function prepareImport(event) {
+  const [file] = event.target.files;
+  event.target.value = "";
+  if (!file) return;
+  if (file.size > 25 * 1024 * 1024) return showToast("備份檔超過 25 MB，已取消匯入。");
+  try {
+    state.pendingImport = parseBackup(await file.text());
+    const relationshipCount = state.pendingImport.relationships.relationships.length;
+    const operationCount = state.pendingImport.operations.length;
+    $("#importSummary").textContent = `將以備份中的 ${relationshipCount.toLocaleString("zh-TW")} 筆好友關係與 ${operationCount.toLocaleString("zh-TW")} 筆操作紀錄，取代目前的本機資料。Token 不受影響。`;
+    $("#importDialog").returnValue = "";
+    $("#importDialog").showModal();
+  } catch (error) {
+    state.pendingImport = null;
+    $("#dataImportStatus").textContent = error.message;
+    showToast(error.message);
+  }
+}
+
+async function applyImport() {
+  const backup = state.pendingImport;
+  state.pendingImport = null;
+  if (!backup) return;
+  await Promise.all([
+    writeLocal("relationships", backup.relationships),
+    writeLocal("operations", backup.operations),
+  ]);
+  state.all = backup.relationships.relationships;
+  state.operations = backup.operations;
+  state.page = 1;
+  renderSummary("cache", backup.relationships.fetched_at);
+  applyFilters();
+  renderOperations();
+  renderScanStatus();
+  renderDataSummary();
+  $("#dataImportStatus").textContent = `匯入完成：${state.all.length.toLocaleString("zh-TW")} 筆關係、${state.operations.length.toLocaleString("zh-TW")} 筆操作紀錄。`;
+  showToast("備份已匯入，可直接到好友管理或操作紀錄檢視。");
 }
 
 let toastTimer;
@@ -431,14 +516,25 @@ function showToast(message) {
 
 async function clearCache() {
   await deleteLocal("relationships");
-  $("#sourceBadge").textContent = "快取已清除";
-  $("#fetchedAt").textContent = "目前畫面仍保留";
-  showToast("好友快取已清除；操作紀錄仍保留。重新載入後需再從 Discord 取得資料。");
+  state.all = [];
+  state.page = 1;
+  renderSummary("cache", null);
+  applyFilters();
+  renderScanStatus();
+  renderDataSummary();
+  showToast("好友快取已清除，操作紀錄仍保留。");
 }
 
-function showTokenDialog(showGuide = false) {
+async function clearOperations() {
+  await deleteLocal("operations");
+  state.operations = [];
+  renderOperations();
+  renderDataSummary();
+  showToast("操作紀錄已清除，好友快取仍保留。");
+}
+
+function showTokenDialog() {
   $("#tokenError").hidden = true;
-  $("#tokenGuide").open = showGuide;
   if (!$("#tokenDialog").open) $("#tokenDialog").showModal();
   $("#tokenInput").focus();
 }
@@ -500,8 +596,10 @@ async function initialise() {
     applyFilters();
     renderOperations();
     renderScanStatus();
+    renderDataSummary();
     updateConnection();
-    if (new URLSearchParams(window.location.search).get("view") === "operations") switchWorkspace("operations");
+    const requestedView = new URLSearchParams(window.location.search).get("view");
+    switchWorkspace(["friends", "operations", "data"].includes(requestedView) ? requestedView : "home");
   } catch (error) {
     showToast(`無法讀取瀏覽器快取：${error.message}`);
   }
@@ -511,15 +609,22 @@ for (const selector of ["#searchInput", "#typeFilter", "#sortField", "#sortDirec
 $("#previousPage").addEventListener("click", () => { state.page -= 1; renderRows(); });
 $("#nextPage").addEventListener("click", () => { state.page += 1; renderRows(); });
 $("#exportButton").addEventListener("click", exportCsv);
+$("#exportBackupButton").addEventListener("click", exportBackup);
+$("#importBackupInput").addEventListener("change", prepareImport);
 $("#refreshButton").addEventListener("click", refreshRelationships);
 $("#loginButton").addEventListener("click", () => showTokenDialog());
-$("#bannerLoginButton").addEventListener("click", () => showTokenDialog());
-$("#tokenHelpButton").addEventListener("click", () => showTokenDialog(true));
-$("#accountPrivacyButton").addEventListener("click", () => $("#privacyDialog").showModal());
-$("#projectInfoButton").addEventListener("click", () => $("#projectDialog").showModal());
+$("#homeLoginButton").addEventListener("click", () => showTokenDialog());
 $("#logoutButton").addEventListener("click", () => { forgetToken(); showToast("已從此分頁登出並清除記憶體中的 Token。"); });
 $("#clearCacheButton").addEventListener("click", () => $("#confirmDialog").showModal());
 $("#confirmDialog").addEventListener("close", (event) => { if (event.target.returnValue === "confirm") clearCache(); });
+$("#clearOperationsButton").addEventListener("click", () => $("#clearOperationsDialog").showModal());
+$("#clearOperationsDialog").addEventListener("close", (event) => { if (event.target.returnValue === "confirm") clearOperations(); });
+$("#importDialog").addEventListener("close", async (event) => {
+  if (event.target.returnValue === "confirm") {
+    try { await applyImport(); } catch (error) { showToast(`匯入失敗：${error.message}`); }
+  }
+  else state.pendingImport = null;
+});
 $("#relationshipRows").addEventListener("click", (event) => {
   const button = event.target.closest("[data-remove-id]");
   if (!button) return;
@@ -539,8 +644,17 @@ $("#pauseScanButton").addEventListener("click", pauseMessageScan);
 $("#friendsSidebar .nav-item").addEventListener("click", (event) => selectNavigation("all", event.currentTarget));
 $("#friendsNav").addEventListener("click", (event) => selectNavigation("friend", event.currentTarget));
 $("#outgoingNav").addEventListener("click", (event) => selectNavigation("outgoing_request", event.currentTarget));
+$("#projectInfoButton").addEventListener("click", () => switchWorkspace("home"));
 $("#friendsWorkspaceButton").addEventListener("click", () => switchWorkspace("friends"));
 $("#operationsWorkspaceButton").addEventListener("click", () => switchWorkspace("operations"));
+$("#dataWorkspaceButton").addEventListener("click", () => switchWorkspace("data"));
+document.querySelectorAll("[data-home-target], [data-data-target]").forEach((button) => button.addEventListener("click", () => {
+  const group = button.closest("nav");
+  group.querySelectorAll(".nav-item").forEach((item) => item.classList.remove("active"));
+  button.classList.add("active");
+  const targetId = button.dataset.homeTarget || button.dataset.dataTarget;
+  document.getElementById(targetId)?.scrollIntoView({ behavior: "smooth", block: "start" });
+}));
 $("#operationSearch").addEventListener("input", renderOperations);
 document.querySelectorAll("[data-operation-filter]").forEach((button) => button.addEventListener("click", () => { state.operationFilter = button.dataset.operationFilter; document.querySelectorAll("[data-operation-filter]").forEach((item) => item.classList.remove("active")); button.classList.add("active"); renderOperations(); }));
 $("#operationRows").addEventListener("click", (event) => {
