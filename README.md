@@ -1,59 +1,58 @@
 # Discord Friend Manager
 
-在本機瀏覽、搜尋、排序、匯出及移除 Discord 好友。資料包含關係類型、成為好友時間、帳號建立時間、最後訊息時間、自訂暱稱、備註、顯示名稱、公開旗標與 Guild Tag。排序選單只提供這三個時間欄位。
+純前端的 Discord 好友整理工具，可部署至 GitHub Pages。介面可搜尋、排序、匯出、移除好友、重新送出好友邀請，並逐位補齊最後訊息時間。
 
 > [!WARNING]
-> Discord 明確表示使用一般使用者 token 自動化（self-bot）違反服務條款，可能造成帳號停權。此工具只做唯讀請求並減少請求次數，但無法消除帳號風險。請自行評估後使用。
+> Discord 明確表示使用一般使用者 token 自動化（self-bot）違反服務條款，可能造成帳號停權。此工具無法消除帳號風險，請自行評估後使用。
 
-## 安裝與啟動
+## 資料流與隱私
 
-需要 Python 3.11 以上版本。
+- Token 由使用者每次開啟頁面時輸入，只保存在該分頁的 JavaScript 記憶體。
+- Token 不會寫入 IndexedDB、LocalStorage、Cookie、URL、Service Worker、操作紀錄或錯誤日誌。
+- 好友快取、最後訊息掃描進度與操作紀錄只寫入目前瀏覽器的 IndexedDB。
+- Discord 請求由瀏覽器直接送往 `https://discord.com/api/v9`，不經過自建伺服器。
+- 網站沒有分析工具、錯誤追蹤、第三方 JavaScript、外部字型或自建 API。
+- GitHub Pages 仍會收到提供靜態檔案所需的一般連線資料，例如 IP、User-Agent 與請求時間；不會收到 token 或 Discord 好友資料。
+- Discord 與 Discord CDN 會收到執行 API 及載入頭像所必要的請求。
+
+瀏覽器重新整理或關閉後會忘記 token，但 IndexedDB 快取仍會保留。按下「忘記 Token」可立即清除分頁記憶體中的 token；「清除快取」只清除好友快取，不會刪除操作紀錄。
+
+## GitHub Pages
+
+推送 `main` 後，[`.github/workflows/pages.yml`](.github/workflows/pages.yml) 會將 `static/` 直接部署至 GitHub Pages。Repository 的 **Settings > Pages > Source** 需設為 **GitHub Actions**。
+
+部署網址預期為：
+
+```text
+https://apple050620312.github.io/DiscordFriendManager/
+```
+
+所有資源使用相對路徑，可在專案子路徑正常載入。
+
+## 本機預覽
+
+任何靜態檔案伺服器都可使用。例如：
 
 ```powershell
-python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe app.py
+python -m http.server 8765 --directory static
 ```
 
-程式只監聽 `127.0.0.1:8765`，啟動後會開啟本機儀表板。`.env` 應為：
-
-```dotenv
-TOKEN=你的_user_token
-```
-
-`.env` 已由 Git 忽略。程式不會把 token 傳給瀏覽器、寫入快取或輸出到日誌。
+開啟 `http://127.0.0.1:8765/`。直接以 `file://` 開啟可能因 ES modules 與瀏覽器安全限制而無法運作。
 
 ## 快取與限流
 
-首次啟動且沒有快取時才會登入並取得 relationships。之後每次啟動都直接讀取 `cache/relationships.json`，不會重複呼叫 Discord。`cache/` 也已由 Git 忽略。
+首次連線或按下「重新整理」時才會取得 relationships 與最近的 DM 頻道。已取得的資料會保存於 IndexedDB，重新開啟頁面不會自動重複請求 Discord。
 
-舊快取第一次升級時會額外取得一次私訊頻道清單，利用每個 DM 的 `last_message_id` 在本機計算「最後訊息時間」，並將完成狀態寫入快取。此時間代表你們私訊頻道的最後一則訊息，可能由你或對方發出；沒有可見 DM 頻道時顯示為空。程式不會逐位讀取訊息歷史。
+「補齊時間」會逐位取得或建立 DM 頻道，從 `last_message_id` 在瀏覽器內計算最後訊息時間；不會讀取或傳送訊息，但部分舊 DM 可能重新出現在 Discord 私訊清單。每完成一位便保存一次進度，可中途暫停並在之後接續。
 
-Discord 的私訊頻道清單只涵蓋最近一部分 DM，因此初始資料可能不完整。儀表板的「補齊時間」會逐位取得或建立好友的 DM 頻道，再由 `last_message_id` 計算時間；它不會讀取或傳送訊息，但部分舊 DM 可能重新出現在 Discord 私訊清單。掃描為單線程、可暫停，進度與結果逐筆寫入 `cache/message_scan.json`，重新啟動後可接續而不重做已完成項目。
+所有 Discord API 請求由同一佇列逐筆執行。遇到 429 時會讀取 `Retry-After`，bucket 用完時會讀取 `X-RateLimit-Reset-After`，等待後才繼續。
 
-`discord.py-self` 的 HTTP client 會讀取 Discord 的 rate-limit bucket、`X-RateLimit-*` 與 `Retry-After`，遇到 429 時動態等待；跨程序鎖則避免多個本機執行個體同時補快取。
+## 瀏覽器相容性
 
-若要取得全新資料，先明確清除快取：
+純 GitHub Pages 版本依賴 Discord 允許該 Pages origin 的 CORS 請求。若登入時顯示跨來源或網路錯誤，代表瀏覽器當下無法直接呼叫 Discord API；靜態網站本身無法繞過此限制，也不會改用會接觸 token 的代理伺服器。
 
-```powershell
-.\.venv\Scripts\python.exe app.py --clear-cache
-.\.venv\Scripts\python.exe app.py
-```
+## 移除與重新加好友
 
-儀表板也提供「清除快取」。清除不會立刻觸發 API，停止並重新啟動後才會重新取得。
+「移除好友」預設顯示確認視窗，按住 `Shift` 點擊可跳過確認。程式會先在 IndexedDB 建立 pending 操作紀錄，Discord 成功後才從本機好友清單移除；失敗則保存錯誤狀態。
 
-## 移除好友
-
-好友列右側的「移除好友」預設會先顯示確認視窗。按住 `Shift` 再點擊可跳過確認。遠端刪除成功後，該筆資料才會從畫面與本機快取移除；失敗時不會改動快取。
-
-刪除功能使用同一個延遲建立的 `discord.py-self` HTTP client 並逐筆執行，因此多次操作會共用 Discord 的動態 rate-limit 狀態，不會平行轟炸端點。
-
-## 操作紀錄與重新加好友
-
-每次移除好友時，程式會先將使用者快照與原始關係資料寫入 `cache/operations.json`，再呼叫 Discord。紀錄會保存處理中、完成或失敗狀態，不會因「清除快取」而刪除。舊版本刪除但仍能從訊息掃描快取辨識的好友，會在啟動時復原為推估時間的刪除紀錄。
-
-第一欄的「錄」可開啟操作紀錄。已完成的好友刪除提供「重新加好友」，確認後會送出好友邀請並另外新增一筆操作紀錄，不會把原刪除紀錄覆蓋掉。
-
-## 資料限制
-
-relationships API 不提供最後互動時間、在線狀態或共同伺服器。最後訊息時間可透過明確啟動的逐位 DM 掃描補齊；帳號建立時間則由 Discord snowflake ID 在本機計算，不增加 API 用量。
+已完成的移除紀錄可按「重新加好友」，確認後直接向 Discord 送出好友邀請並建立另一筆操作紀錄。
