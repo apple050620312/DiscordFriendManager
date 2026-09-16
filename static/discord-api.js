@@ -33,7 +33,7 @@ export class DiscordApi {
 
   constructor(token, fetchImplementation = fetch, logger = () => {}) {
     this.#token = token;
-    this.#fetch = fetchImplementation;
+    this.#fetch = (...args) => Reflect.apply(fetchImplementation, globalThis, args);
     this.#logger = logger;
   }
 

@@ -1,5 +1,5 @@
 import { deleteLocal, readLocal, writeLocal } from "./db.js";
-import { DiscordApi, DiscordApiError } from "./discord-api.js";
+import { DiscordApi, DiscordApiError } from "./discord-api.js?v=13";
 
 const state = {
   api: null, currentUser: null, all: [], filtered: [], page: 1, pageSize: 100,

@@ -25,6 +25,22 @@ test("adds the in-memory token only to Discord requests", async () => {
   assert.equal(JSON.stringify(events).includes("secret-token"), false);
 });
 
+test("calls browser fetch with the global object as its receiver", async () => {
+  let receiver;
+  const browserLikeFetch = function () {
+    receiver = this;
+    return Promise.resolve(new Response(JSON.stringify({ id: "1" }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }));
+  };
+  const api = new DiscordApi("token", browserLikeFetch);
+
+  await api.currentUser();
+
+  assert.equal(receiver, globalThis);
+});
+
 test("retries a 429 using retry_after", async () => {
   let calls = 0;
   const api = new DiscordApi("token", async () => {
