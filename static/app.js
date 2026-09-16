@@ -179,9 +179,25 @@ function renderSummary(source = "cache", fetchedAt = null) {
 }
 
 function updateConnection() {
-  $("#sessionUser").textContent = state.currentUser ? `已連線：${state.currentUser.global_name || state.currentUser.username}` : "Token 未載入";
-  $("#refreshButton").disabled = !state.api;
-  $("#logoutButton").disabled = !state.api;
+  const connected = Boolean(state.api && state.currentUser);
+  const user = state.currentUser;
+  const avatar = $("#sessionAvatar");
+  $("#sessionPanel").classList.toggle("connected", connected);
+  $("#sessionName").textContent = connected ? (user.global_name || user.username) : "尚未登入";
+  $("#sessionHandle").textContent = connected ? `@${user.username}` : "Token 未載入";
+  $("#sessionAvatarFallback").textContent = connected ? initials({ display_name: user.global_name || user.username }) : "?";
+  const imageUrl = connected ? avatarUrl(user) : "";
+  if (imageUrl) {
+    avatar.src = imageUrl;
+    avatar.hidden = false;
+  } else {
+    avatar.removeAttribute("src");
+    avatar.hidden = true;
+  }
+  $("#loginButton").hidden = connected;
+  $("#logoutButton").hidden = !connected;
+  $("#connectionBanner").hidden = connected;
+  $("#refreshButton").disabled = !connected;
 }
 
 function switchWorkspace(workspace) {
@@ -420,8 +436,9 @@ async function clearCache() {
   showToast("好友快取已清除；操作紀錄仍保留。重新載入後需再從 Discord 取得資料。");
 }
 
-function showTokenDialog() {
+function showTokenDialog(showGuide = false) {
   $("#tokenError").hidden = true;
+  $("#tokenGuide").open = showGuide;
   if (!$("#tokenDialog").open) $("#tokenDialog").showModal();
   $("#tokenInput").focus();
 }
@@ -488,7 +505,6 @@ async function initialise() {
   } catch (error) {
     showToast(`無法讀取瀏覽器快取：${error.message}`);
   }
-  showTokenDialog();
 }
 
 for (const selector of ["#searchInput", "#typeFilter", "#sortField", "#sortDirection", "#pageSize"]) $(selector).addEventListener("input", () => { state.page = 1; applyFilters(); });
@@ -496,7 +512,13 @@ $("#previousPage").addEventListener("click", () => { state.page -= 1; renderRows
 $("#nextPage").addEventListener("click", () => { state.page += 1; renderRows(); });
 $("#exportButton").addEventListener("click", exportCsv);
 $("#refreshButton").addEventListener("click", refreshRelationships);
-$("#logoutButton").addEventListener("click", () => { forgetToken(); showTokenDialog(); });
+$("#loginButton").addEventListener("click", () => showTokenDialog());
+$("#bannerLoginButton").addEventListener("click", () => showTokenDialog());
+$("#tokenHelpButton").addEventListener("click", () => showTokenDialog(true));
+$("#privacyButton").addEventListener("click", () => $("#privacyDialog").showModal());
+$("#accountPrivacyButton").addEventListener("click", () => $("#privacyDialog").showModal());
+$("#projectInfoButton").addEventListener("click", () => $("#projectDialog").showModal());
+$("#logoutButton").addEventListener("click", () => { forgetToken(); showToast("已從此分頁登出並清除記憶體中的 Token。"); });
 $("#clearCacheButton").addEventListener("click", () => $("#confirmDialog").showModal());
 $("#confirmDialog").addEventListener("close", (event) => { if (event.target.returnValue === "confirm") clearCache(); });
 $("#relationshipRows").addEventListener("click", (event) => {
@@ -534,7 +556,8 @@ $("#operationRows").addEventListener("click", (event) => {
 });
 $("#readdFriendDialog").addEventListener("close", (event) => { if (event.target.returnValue === "confirm" && state.pendingReaddId) readdFriend(state.pendingReaddId); state.pendingReaddId = null; });
 $("#tokenForm").addEventListener("submit", connect);
-$("#tokenDialog").addEventListener("cancel", (event) => event.preventDefault());
+$("#cancelTokenButton").addEventListener("click", () => $("#tokenDialog").close());
+$("#sessionAvatar").addEventListener("error", (event) => { event.currentTarget.hidden = true; });
 window.addEventListener("pagehide", forgetToken);
 
 initialise();
