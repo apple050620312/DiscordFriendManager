@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title desc">
+  <title id="title">Discord Friend Manager</title>
+  <desc id="desc">A connected group of friends on a purple rounded square.</desc>
+  <rect width="64" height="64" rx="18" fill="#5865f2"/>
+  <path d="M17 23.5 27.5 17M47 23.5 36.5 17M20 39l8.5-6M44 39l-8.5-6" fill="none" stroke="#b5f5d0" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="14" cy="25" r="5" fill="#b5f5d0"/>
+  <circle cx="50" cy="25" r="5" fill="#b5f5d0"/>
+  <circle cx="17" cy="42" r="4" fill="#b5f5d0"/>
+  <circle cx="47" cy="42" r="4" fill="#b5f5d0"/>
+  <circle cx="32" cy="17" r="7" fill="#fff"/>
+  <path d="M20.5 45c1.8-9 6.1-13 11.5-13s9.7 4 11.5 13" fill="#fff"/>
+  <path d="M28 41.5 31 44l5-6" fill="none" stroke="#5865f2" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

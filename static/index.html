@@ -6,12 +6,13 @@
     <meta name="color-scheme" content="dark">
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src https://discord.com; img-src 'self' data: https://cdn.discordapp.com https://*.discordapp.com; script-src 'self'; style-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
     <title>Discord 好友管理</title>
-    <link rel="stylesheet" href="./styles.css?v=17">
+    <link rel="icon" href="./logo.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="./styles.css?v=18">
   </head>
   <body>
     <div class="app-shell">
       <aside class="server-rail" aria-label="工具列">
-        <button id="projectInfoButton" class="server-mark" type="button" data-tooltip="Discord Friend Manager" aria-label="專案資訊"><span>DF</span></button>
+        <button id="projectInfoButton" class="server-mark" type="button" data-tooltip="Discord Friend Manager" aria-label="專案資訊"><img src="./logo.svg" alt=""></button>
         <div class="rail-divider"></div>
         <button id="friendsWorkspaceButton" class="rail-icon active" type="button" data-tooltip="好友管理" aria-label="好友管理"><svg class="rail-glyph" aria-hidden="true"><use href="./icons.svg#users-round"></use></svg></button>
         <button id="operationsWorkspaceButton" class="rail-icon" type="button" data-tooltip="操作紀錄" aria-label="操作紀錄"><svg class="rail-glyph" aria-hidden="true"><use href="./icons.svg#history"></use></svg></button>
@@ -253,7 +254,7 @@
     <dialog id="projectDialog" class="project-dialog">
       <form method="dialog">
         <div class="project-brand">
-          <div class="project-logo">DF</div>
+          <img class="project-logo" src="./logo.svg" alt="">
           <div><h2>Discord Friend Manager</h2><p>在瀏覽器整理、排序與管理 Discord 好友關係。</p></div>
         </div>
         <div class="project-facts">
@@ -303,6 +304,6 @@
     </dialog>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script src="./app.js?v=17" type="module"></script>
+    <script src="./app.js?v=18" type="module"></script>
   </body>
 </html>
