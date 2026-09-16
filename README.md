@@ -1,4 +1,4 @@
-# Discord Friend Analyze
+# Discord Friend Manager
 
 在本機瀏覽、搜尋、排序、匯出及移除 Discord 好友。資料包含關係類型、成為好友時間、帳號建立時間、最後訊息時間、自訂暱稱、備註、顯示名稱、公開旗標與 Guild Tag。排序選單只提供這三個時間欄位。
 

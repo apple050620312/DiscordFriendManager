@@ -462,7 +462,7 @@ def clear_cache() -> bool:
 
 
 class DashboardHandler(SimpleHTTPRequestHandler):
-    server_version = "DiscordFriendAnalyze/1.0"
+    server_version = "DiscordFriendManager/1.0"
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, directory=str(STATIC_DIR), **kwargs)

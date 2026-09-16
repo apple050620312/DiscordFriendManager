@@ -165,7 +165,7 @@ function switchWorkspace(workspace) {
   $(".header-search").hidden = !isFriends;
   $("#friendsWorkspaceButton").classList.toggle("active", isFriends);
   $("#operationsWorkspaceButton").classList.toggle("active", !isFriends);
-  $("#sidebarTitle").textContent = isFriends ? "好友整理" : "操作紀錄";
+  $("#sidebarTitle").textContent = isFriends ? "好友管理" : "操作紀錄";
   $("#workspaceIcon").textContent = isFriends ? "♟" : "≡";
   $("#workspaceTitle").textContent = isFriends ? "好友" : "操作紀錄";
   $("#workspaceSubtitle").textContent = isFriends ? "排序與整理" : "刪除與好友邀請歷程";
