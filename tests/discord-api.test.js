@@ -16,7 +16,7 @@ test("adds the in-memory token only to Discord requests", async () => {
   await api.currentUser();
 
   assert.equal(calls.length, 1);
-  assert.equal(calls[0].url, "https://discord.com/api/v9/users/@me");
+  assert.equal(calls[0].url, "https://discord.com/api/v10/users/@me");
   assert.equal(calls[0].options.headers.Authorization, "secret-token");
   assert.equal(calls[0].options.credentials, "omit");
   assert.equal(calls[0].options.referrerPolicy, "no-referrer");
@@ -39,6 +39,21 @@ test("retries a 429 using retry_after", async () => {
   });
 
   assert.deepEqual(await api.relationships(), []);
+  assert.equal(calls, 2);
+});
+
+test("retries one transient browser network failure", async () => {
+  let calls = 0;
+  const api = new DiscordApi("token", async () => {
+    calls += 1;
+    if (calls === 1) throw new TypeError("Failed to fetch");
+    return new Response(JSON.stringify({ id: "1" }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  });
+
+  assert.deepEqual(await api.currentUser(), { id: "1" });
   assert.equal(calls, 2);
 });
 

@@ -10,7 +10,7 @@
 - Token 由使用者每次開啟頁面時輸入，只保存在該分頁的 JavaScript 記憶體。
 - Token 不會寫入 IndexedDB、LocalStorage、Cookie、URL、Service Worker、操作紀錄或錯誤日誌。
 - 好友快取、最後訊息掃描進度與操作紀錄只寫入目前瀏覽器的 IndexedDB。
-- Discord 請求由瀏覽器直接送往 `https://discord.com/api/v9`，不經過自建伺服器。
+- Discord 請求由瀏覽器直接送往 `https://discord.com/api/v10`，不經過自建伺服器。
 - 網站沒有分析工具、錯誤追蹤、第三方 JavaScript、外部字型或自建 API。
 - GitHub Pages 仍會收到提供靜態檔案所需的一般連線資料，例如 IP、User-Agent 與請求時間；不會收到 token 或 Discord 好友資料。
 - Discord 與 Discord CDN 會收到執行 API 及載入頭像所必要的請求。
@@ -49,7 +49,7 @@ python -m http.server 8765 --directory static
 
 ## 瀏覽器相容性
 
-純 GitHub Pages 版本依賴 Discord 允許該 Pages origin 的 CORS 請求。若登入時顯示跨來源或網路錯誤，代表瀏覽器當下無法直接呼叫 Discord API；靜態網站本身無法繞過此限制，也不會改用會接觸 token 的代理伺服器。
+純 GitHub Pages 版本依賴 Discord 允許該 Pages origin 的 CORS 請求。Discord 已對一般瀏覽器回傳允許 origin 與 `Authorization` 的預檢 headers；Codex 內建瀏覽器則可能額外封鎖跨站授權請求，請改用一般 Chrome 或 Edge。若一般瀏覽器仍顯示網路錯誤，靜態網站不會改用會接觸 token 的代理伺服器。
 
 ## 移除與重新加好友
 

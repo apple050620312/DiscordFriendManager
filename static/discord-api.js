@@ -1,4 +1,4 @@
-const API_BASE = "https://discord.com/api/v9";
+const API_BASE = "https://discord.com/api/v10";
 
 export class DiscordApiError extends Error {
   constructor(message, status = 0, code = null) {
@@ -66,8 +66,12 @@ export class DiscordApi {
           body: body === undefined ? undefined : JSON.stringify(body),
         });
       } catch (error) {
+        if (attempt === 0) {
+          await sleep(500);
+          continue;
+        }
         throw new DiscordApiError(
-          "瀏覽器無法連線 Discord API。可能是網路問題，或 Discord 阻擋了此網域的跨來源請求。",
+          "瀏覽器無法連線 Discord API。若正在使用 Codex 內建瀏覽器，請改用一般 Chrome 或 Edge；內建瀏覽器可能封鎖跨站授權請求。",
         );
       }
 
