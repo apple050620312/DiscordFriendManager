@@ -8,6 +8,10 @@ const state = {
   removingId: null,
   scanStatus: null,
   scanPollTimer: null,
+  workspace: "friends",
+  operations: [],
+  operationFilter: "all",
+  pendingReaddId: null,
 };
 
 const TYPE_LABELS = {
@@ -27,6 +31,17 @@ const FLAG_LABELS = [
   [256, "Balance"], [512, "早期支持者"], [16384, "Bug Hunter II"],
   [131072, "早期機器人開發者"], [262144, "認證版主"], [4194304, "Active Developer"],
 ];
+
+const OPERATION_LABELS = {
+  remove_friend: "移除好友",
+  send_friend_request: "送出好友邀請",
+};
+
+const OPERATION_STATUS_LABELS = {
+  pending: "處理中",
+  completed: "已完成",
+  failed: "失敗",
+};
 
 const $ = (selector) => document.querySelector(selector);
 
@@ -136,6 +151,108 @@ function renderSummary(payload) {
   $("#notedCount").textContent = items.filter((item) => item.note).length.toLocaleString("zh-TW");
   $("#sourceBadge").textContent = payload.source === "cache" ? "本機快取" : "剛從 Discord 取得";
   $("#fetchedAt").textContent = `擷取於 ${formatDate(payload.fetched_at)}`;
+}
+
+function switchWorkspace(workspace) {
+  state.workspace = workspace;
+  const isFriends = workspace === "friends";
+  $("#friendsView").hidden = !isFriends;
+  $("#operationsView").hidden = isFriends;
+  $("#friendsSidebar").hidden = !isFriends;
+  $("#sidebarFilters").hidden = !isFriends;
+  $("#operationsSidebar").hidden = isFriends;
+  $("#sidebarScan").hidden = !isFriends;
+  $(".header-search").hidden = !isFriends;
+  $("#friendsWorkspaceButton").classList.toggle("active", isFriends);
+  $("#operationsWorkspaceButton").classList.toggle("active", !isFriends);
+  $("#sidebarTitle").textContent = isFriends ? "好友整理" : "操作紀錄";
+  $("#workspaceIcon").textContent = isFriends ? "♟" : "≡";
+  $("#workspaceTitle").textContent = isFriends ? "好友" : "操作紀錄";
+  $("#workspaceSubtitle").textContent = isFriends ? "排序與整理" : "刪除與好友邀請歷程";
+  if (!isFriends) loadOperations();
+}
+
+function renderOperations() {
+  const query = $("#operationSearch").value.trim().toLocaleLowerCase("zh-Hant");
+  const visible = state.operations.filter((operation) => {
+    if (state.operationFilter !== "all" && operation.action !== state.operationFilter) return false;
+    const user = operation.user || {};
+    const haystack = [user.display_name, user.global_name, user.username, user.id]
+      .filter(Boolean).join(" ").toLocaleLowerCase("zh-Hant");
+    return !query || haystack.includes(query);
+  });
+
+  $("#operationCount").textContent = visible.length.toLocaleString("zh-TW");
+  const rows = $("#operationRows");
+  if (!visible.length) {
+    rows.innerHTML = '<div class="empty">沒有符合條件的操作紀錄</div>';
+    return;
+  }
+  rows.innerHTML = visible.map((operation) => {
+    const user = operation.user || {};
+    const source = operation.source === "recovered_from_message_scan"
+      ? "從掃描快取復原"
+      : (operation.error ? operation.error : "由本機儀表板執行");
+    const canReadd = operation.action === "remove_friend"
+      && operation.status === "completed"
+      && !operation.readd_requested_at;
+    const timeLabel = `${operation.time_is_estimated ? "約 " : ""}${formatDate(operation.occurred_at)}`;
+    return `
+      <article class="operation-row" data-operation-id="${escapeHtml(operation.id)}">
+        <div class="user">
+          <div class="avatar-wrap" aria-hidden="true">
+            <div class="avatar-fallback">${escapeHtml(initials(user))}</div>
+            ${user.avatar_url ? `<img class="avatar" src="${escapeHtml(user.avatar_url)}" alt="" loading="lazy">` : ""}
+          </div>
+          <div>
+            <div class="user-name">${escapeHtml(user.display_name || user.id)}</div>
+            <div class="user-handle">${user.username ? `@${escapeHtml(user.username)} · ` : ""}${escapeHtml(user.id)}</div>
+          </div>
+        </div>
+        <div class="operation-action">
+          ${escapeHtml(OPERATION_LABELS[operation.action] || operation.action)}
+          <div class="operation-source">${escapeHtml(source)}</div>
+        </div>
+        <div class="operation-state"><span class="operation-status ${escapeHtml(operation.status)}">${escapeHtml(OPERATION_STATUS_LABELS[operation.status] || operation.status)}</span></div>
+        <div class="operation-time cell">${escapeHtml(timeLabel)}</div>
+        <div class="row-actions">
+          ${canReadd ? `<button class="readd-friend" type="button" data-readd-id="${escapeHtml(operation.id)}">重新加好友</button>` : `<span class="subtle">${operation.readd_requested_at ? "已送出邀請" : "—"}</span>`}
+        </div>
+      </article>
+    `;
+  }).join("");
+  rows.querySelectorAll(".avatar").forEach((image) => {
+    image.addEventListener("error", () => image.remove());
+  });
+}
+
+async function loadOperations() {
+  try {
+    const response = await fetch("/api/operations", { cache: "no-store" });
+    if (!response.ok) throw new Error("無法讀取操作紀錄");
+    const payload = await response.json();
+    state.operations = payload.operations;
+    renderOperations();
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
+async function readdFriend(operationId) {
+  const operation = state.operations.find((item) => item.id === operationId);
+  if (!operation) return;
+  try {
+    const response = await fetch(`/api/operations/${encodeURIComponent(operationId)}/readd`, {
+      method: "POST",
+      headers: { "X-CSRF-Token": state.csrfToken },
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || "無法送出好友邀請");
+    await Promise.all([loadOperations(), reloadRelationships()]);
+    showToast(`已向 ${operation.user.display_name || operation.user.id} 送出好友邀請`);
+  } catch (error) {
+    showToast(error.message);
+  }
 }
 
 function updateCounts() {
@@ -310,6 +427,7 @@ async function removeFriend(userId) {
     state.all = state.all.filter((entry) => entry.id !== userId);
     applyFilters();
     updateCounts();
+    if (state.operations.length) loadOperations();
     showToast(`已移除 ${item.display_name}`);
   } catch (error) {
     showToast(error.message);
@@ -348,6 +466,9 @@ async function initialise() {
     applyFilters();
     renderScanStatus(scan);
     if (scan.status === "scanning" || scan.status === "pausing") scheduleScanPoll();
+    if (new URLSearchParams(window.location.search).get("view") === "operations") {
+      switchWorkspace("operations");
+    }
   } catch (error) {
     $("#relationshipRows").innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
     showToast("資料載入失敗，請重新啟動程式。");
@@ -393,5 +514,32 @@ $("#pauseScanButton").addEventListener("click", pauseMessageScan);
 $(".nav-item.active").addEventListener("click", (event) => selectNavigation("all", event.currentTarget));
 $("#friendsNav").addEventListener("click", (event) => selectNavigation("friend", event.currentTarget));
 $("#outgoingNav").addEventListener("click", (event) => selectNavigation("outgoing_request", event.currentTarget));
+$("#friendsWorkspaceButton").addEventListener("click", () => switchWorkspace("friends"));
+$("#operationsWorkspaceButton").addEventListener("click", () => switchWorkspace("operations"));
+$("#operationSearch").addEventListener("input", renderOperations);
+document.querySelectorAll("[data-operation-filter]").forEach((button) => {
+  button.addEventListener("click", () => {
+    state.operationFilter = button.dataset.operationFilter;
+    document.querySelectorAll("[data-operation-filter]").forEach((item) => item.classList.remove("active"));
+    button.classList.add("active");
+    renderOperations();
+  });
+});
+$("#operationRows").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-readd-id]");
+  if (!button) return;
+  const operation = state.operations.find((item) => item.id === button.dataset.readdId);
+  if (!operation) return;
+  state.pendingReaddId = operation.id;
+  $("#readdFriendName").textContent = operation.user.display_name || operation.user.id;
+  $("#readdFriendDialog").returnValue = "";
+  $("#readdFriendDialog").showModal();
+});
+$("#readdFriendDialog").addEventListener("close", (event) => {
+  if (event.target.returnValue === "confirm" && state.pendingReaddId) {
+    readdFriend(state.pendingReaddId);
+  }
+  state.pendingReaddId = null;
+});
 
 initialise();

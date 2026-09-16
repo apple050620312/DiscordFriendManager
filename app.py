@@ -8,6 +8,7 @@ import secrets
 import sys
 import threading
 import time
+import uuid
 import webbrowser
 from contextlib import contextmanager
 from datetime import UTC, datetime
@@ -26,9 +27,11 @@ STATIC_DIR = ROOT / "static"
 CACHE_DIR = ROOT / "cache"
 CACHE_PATH = CACHE_DIR / "relationships.json"
 MESSAGE_SCAN_PATH = CACHE_DIR / "message_scan.json"
+OPERATIONS_PATH = CACHE_DIR / "operations.json"
 LOCK_PATH = CACHE_DIR / "fetch.lock"
 CACHE_VERSION = 1
 MESSAGE_SCAN_VERSION = 1
+OPERATIONS_VERSION = 1
 DISCORD_EPOCH_MS = 1_420_070_400_000
 LOCK_STALE_SECONDS = 300
 
@@ -183,6 +186,58 @@ def apply_message_scan_results(
             relationship["last_message_checked"] = bool(relationship.get("last_message_at"))
 
 
+def load_operations() -> list[dict[str, Any]]:
+    if not OPERATIONS_PATH.exists():
+        return []
+    try:
+        payload = json.loads(OPERATIONS_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise CacheError(f"無法讀取操作紀錄：{exc}") from exc
+    if payload.get("version") != OPERATIONS_VERSION or not isinstance(payload.get("operations"), list):
+        raise CacheError("操作紀錄格式不相容。")
+    return payload["operations"]
+
+
+def write_operations(operations: list[dict[str, Any]]) -> None:
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "version": OPERATIONS_VERSION,
+        "updated_at": utc_now(),
+        "operations": operations,
+    }
+    temporary = OPERATIONS_PATH.with_suffix(".tmp")
+    temporary.write_text(
+        json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+        encoding="utf-8",
+    )
+    os.replace(temporary, OPERATIONS_PATH)
+
+
+def user_snapshot(user: dict[str, Any]) -> dict[str, Any]:
+    user_id = str(user.get("id") or "")
+    username = str(user.get("username") or "")
+    global_name = user.get("global_name")
+    return {
+        "id": user_id,
+        "username": username,
+        "global_name": str(global_name) if global_name else None,
+        "display_name": str(global_name or username or user_id),
+        "avatar_url": avatar_url(user_id, user.get("avatar")),
+        "public_flags": int(user.get("public_flags") or 0),
+    }
+
+
+def relationship_user_snapshot(relationship: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": relationship["id"],
+        "username": relationship.get("username") or "",
+        "global_name": relationship.get("global_name"),
+        "display_name": relationship.get("display_name") or relationship.get("username") or relationship["id"],
+        "avatar_url": relationship.get("avatar_url"),
+        "public_flags": int(relationship.get("public_flags") or 0),
+    }
+
+
 @contextmanager
 def fetch_lock() -> Iterator[None]:
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -323,6 +378,37 @@ class DiscordService:
         )
         return future.result(timeout=600)
 
+    async def _fetch_user(self, user_id: int) -> dict[str, Any]:
+        if self._async_lock is None:
+            self._async_lock = asyncio.Lock()
+        async with self._async_lock:
+            client = await self._ensure_client()
+            return await client.http.get_user(user_id)
+
+    def fetch_user(self, user_id: str) -> dict[str, Any]:
+        if not user_id.isdecimal():
+            raise ValueError("無效的 Discord 使用者 ID。")
+        future = asyncio.run_coroutine_threadsafe(self._fetch_user(int(user_id)), self._loop)
+        return future.result(timeout=600)
+
+    async def _send_friend_request(self, user_id: int) -> None:
+        if self._async_lock is None:
+            self._async_lock = asyncio.Lock()
+        async with self._async_lock:
+            client = await self._ensure_client()
+            await client.http.add_relationship(
+                user_id,
+                action=RelationshipAction.send_friend_request,
+            )
+
+    def send_friend_request(self, user_id: str) -> None:
+        if not user_id.isdecimal():
+            raise ValueError("無效的 Discord 使用者 ID。")
+        future = asyncio.run_coroutine_threadsafe(
+            self._send_friend_request(int(user_id)), self._loop
+        )
+        future.result(timeout=600)
+
     async def _close(self) -> None:
         if self._client is not None:
             await self._client.close()
@@ -417,6 +503,9 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         if self.path == "/api/message-scan":
             self._json(self.dashboard_server.message_scan_status())
             return
+        if self.path == "/api/operations":
+            self._json(self.dashboard_server.operations_payload())
+            return
         super().do_GET()
 
     def do_POST(self) -> None:
@@ -424,10 +513,34 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         if not secrets.compare_digest(supplied, self.dashboard_server.csrf_token):
             self._json({"error": "拒絕未授權的本機請求。"}, HTTPStatus.FORBIDDEN)
             return
-        if self.path != "/api/message-scan":
-            self.send_error(HTTPStatus.NOT_FOUND)
+        if self.path == "/api/message-scan":
+            self._json(self.dashboard_server.start_message_scan(), HTTPStatus.ACCEPTED)
             return
-        self._json(self.dashboard_server.start_message_scan(), HTTPStatus.ACCEPTED)
+        if self.path.startswith("/api/operations/") and self.path.endswith("/readd"):
+            operation_id = self.path.removeprefix("/api/operations/").removesuffix("/readd")
+            try:
+                operation = self.dashboard_server.readd_friend(operation_id)
+            except ValueError as exc:
+                self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+                return
+            except TimeoutError:
+                self._json(
+                    {"error": "Discord 回應逾時；請先確認好友邀請狀態再重試。"},
+                    HTTPStatus.GATEWAY_TIMEOUT,
+                )
+                return
+            except discord.HTTPException as exc:
+                self._json(
+                    {"error": f"Discord 拒絕好友邀請（HTTP {exc.status}）。"},
+                    HTTPStatus.BAD_GATEWAY,
+                )
+                return
+            except (OSError, RuntimeError) as exc:
+                self._json({"error": f"送出好友邀請失敗：{exc}"}, HTTPStatus.BAD_GATEWAY)
+                return
+            self._json({"operation": operation}, HTTPStatus.ACCEPTED)
+            return
+        self.send_error(HTTPStatus.NOT_FOUND)
 
     def do_DELETE(self) -> None:
         supplied = self.headers.get("X-CSRF-Token", "")
@@ -492,12 +605,114 @@ class DashboardServer(ThreadingHTTPServer):
         self.discord_service = DiscordService()
         self.data_lock = threading.RLock()
         self.message_scan_results = load_message_scan()
+        self.operations = load_operations()
         self.message_scan_stop = threading.Event()
         self.message_scan_thread: threading.Thread | None = None
         self.message_scan_state = "idle"
         self.message_scan_error: str | None = None
         if self._message_scan_completed() == self._message_scan_total():
             self.message_scan_state = "complete"
+
+    def operations_payload(self) -> dict[str, Any]:
+        with self.data_lock:
+            operations = sorted(
+                self.operations,
+                key=lambda item: item.get("occurred_at") or item.get("created_at") or "",
+                reverse=True,
+            )
+            return {"operations": operations, "count": len(operations)}
+
+    def _new_operation(
+        self,
+        action: str,
+        user: dict[str, Any],
+        *,
+        source: str = "user_action",
+        relationship: dict[str, Any] | None = None,
+        linked_operation_id: str | None = None,
+    ) -> dict[str, Any]:
+        created_at = utc_now()
+        return {
+            "id": uuid.uuid4().hex,
+            "action": action,
+            "status": "pending",
+            "source": source,
+            "created_at": created_at,
+            "occurred_at": created_at,
+            "completed_at": None,
+            "failed_at": None,
+            "error": None,
+            "linked_operation_id": linked_operation_id,
+            "user": user,
+            "relationship": relationship,
+        }
+
+    def recover_orphaned_removals(self) -> list[dict[str, Any]]:
+        with self.data_lock:
+            current_ids = {item["id"] for item in self.payload["relationships"]}
+            logged_ids = {
+                item.get("user", {}).get("id")
+                for item in self.operations
+                if item.get("action") == "remove_friend"
+            }
+            orphan_ids = sorted(
+                user_id
+                for user_id in self.message_scan_results
+                if user_id not in current_ids and user_id not in logged_ids
+            )
+
+        if not orphan_ids:
+            return []
+
+        try:
+            estimated_at = datetime.fromtimestamp(CACHE_PATH.stat().st_mtime, UTC).isoformat(
+                timespec="seconds"
+            )
+        except OSError:
+            estimated_at = utc_now()
+
+        recovered: list[dict[str, Any]] = []
+        for user_id in orphan_ids:
+            recovery_error = None
+            try:
+                user = user_snapshot(self.discord_service.fetch_user(user_id))
+            except (TimeoutError, discord.HTTPException, OSError, RuntimeError, ValueError) as exc:
+                user = {
+                    "id": user_id,
+                    "username": "",
+                    "global_name": None,
+                    "display_name": user_id,
+                    "avatar_url": None,
+                    "public_flags": 0,
+                }
+                recovery_error = f"無法補取使用者資料：{exc}"
+
+            operation = self._new_operation(
+                "remove_friend",
+                user,
+                source="recovered_from_message_scan",
+                relationship={
+                    "id": user_id,
+                    "type": 1,
+                    "type_name": "friend",
+                    "last_message_at": self.message_scan_results[user_id],
+                },
+            )
+            operation.update(
+                {
+                    "status": "completed",
+                    "occurred_at": estimated_at,
+                    "completed_at": estimated_at,
+                    "recovered_at": utc_now(),
+                    "time_is_estimated": True,
+                    "error": recovery_error,
+                }
+            )
+            with self.data_lock:
+                self.operations.append(operation)
+                write_operations(self.operations)
+            recovered.append(operation)
+        return recovered
 
     def _message_scan_friends(self) -> list[dict[str, Any]]:
         return [
@@ -614,7 +829,23 @@ class DashboardServer(ThreadingHTTPServer):
             if target["type_name"] != "friend":
                 raise ValueError("只能用此操作移除好友。")
 
-        self.discord_service.remove_friend(user_id)
+            operation = self._new_operation(
+                "remove_friend",
+                relationship_user_snapshot(target),
+                relationship=dict(target),
+            )
+            self.operations.append(operation)
+            write_operations(self.operations)
+
+        try:
+            self.discord_service.remove_friend(user_id)
+        except Exception as exc:
+            with self.data_lock:
+                operation["status"] = "failed"
+                operation["failed_at"] = utc_now()
+                operation["error"] = str(exc)
+                write_operations(self.operations)
+            raise
 
         with self.data_lock:
             before = len(self.payload["relationships"])
@@ -623,10 +854,75 @@ class DashboardServer(ThreadingHTTPServer):
             ]
             removed = len(self.payload["relationships"]) != before
             if removed:
+                operation["status"] = "completed"
+                operation["completed_at"] = utc_now()
+                write_operations(self.operations)
                 self.payload["source"] = "cache"
                 self.payload["local_updated_at"] = utc_now()
                 write_cache(self.payload)
             return removed
+
+    def readd_friend(self, operation_id: str) -> dict[str, Any]:
+        with self.data_lock:
+            removal = next(
+                (item for item in self.operations if item["id"] == operation_id),
+                None,
+            )
+            if removal is None or removal.get("action") != "remove_friend":
+                raise ValueError("找不到可重新加回的刪除紀錄。")
+            if removal.get("status") != "completed":
+                raise ValueError("只有已完成的刪除紀錄可以重新加回。")
+            user_id = removal["user"]["id"]
+            current = next(
+                (item for item in self.payload["relationships"] if item["id"] == user_id),
+                None,
+            )
+            if current is not None:
+                raise ValueError("這位使用者目前已有好友或邀請關係。")
+
+            request_operation = self._new_operation(
+                "send_friend_request",
+                dict(removal["user"]),
+                linked_operation_id=operation_id,
+            )
+            self.operations.append(request_operation)
+            write_operations(self.operations)
+
+        try:
+            self.discord_service.send_friend_request(user_id)
+        except Exception as exc:
+            with self.data_lock:
+                request_operation["status"] = "failed"
+                request_operation["failed_at"] = utc_now()
+                request_operation["error"] = str(exc)
+                write_operations(self.operations)
+            raise
+
+        with self.data_lock:
+            completed_at = utc_now()
+            request_operation["status"] = "completed"
+            request_operation["completed_at"] = completed_at
+            removal["readd_requested_at"] = completed_at
+            original = dict(removal.get("relationship") or {})
+            original.update(
+                {
+                    "id": user_id,
+                    "type": 4,
+                    "type_name": "outgoing_request",
+                    "username": removal["user"].get("username") or "",
+                    "global_name": removal["user"].get("global_name"),
+                    "display_name": removal["user"].get("display_name") or user_id,
+                    "avatar_url": removal["user"].get("avatar_url"),
+                    "public_flags": int(removal["user"].get("public_flags") or 0),
+                    "since": None,
+                    "nickname": None,
+                    "note": None,
+                }
+            )
+            self.payload["relationships"].append(original)
+            write_operations(self.operations)
+            write_cache(self.payload)
+            return request_operation
 
     def server_close(self) -> None:
         self.message_scan_stop.set()
@@ -671,9 +967,13 @@ def main() -> int:
 
     try:
         server = DashboardServer((args.host, args.port), payload)
-    except OSError as exc:
+    except (CacheError, OSError) as exc:
         print(f"無法啟動本機伺服器：{exc}", file=sys.stderr)
         return 1
+
+    recovered = server.recover_orphaned_removals()
+    if recovered:
+        print(f"已從掃描快取復原 {len(recovered)} 筆先前的好友刪除紀錄。")
 
     url = f"http://127.0.0.1:{server.server_port}/"
     print(f"儀表板：{url}")

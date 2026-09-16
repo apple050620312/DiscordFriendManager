@@ -5,27 +5,84 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="light">
     <title>Discord 好友整理</title>
-    <link rel="stylesheet" href="/styles.css?v=6">
+    <link rel="stylesheet" href="/styles.css?v=9">
   </head>
   <body>
     <div class="app-shell">
       <aside class="server-rail" aria-label="工具列">
         <div class="server-mark" title="Discord Friend Analyze">DF</div>
         <div class="rail-divider"></div>
-        <div class="rail-icon active" aria-hidden="true">友</div>
+        <button id="friendsWorkspaceButton" class="rail-icon active" type="button" title="好友資料">友</button>
+        <button id="operationsWorkspaceButton" class="rail-icon" type="button" title="操作紀錄">錄</button>
       </aside>
 
       <aside class="sidebar">
-        <div class="sidebar-title">好友整理</div>
-        <nav class="sidebar-nav" aria-label="資料檢視">
+        <div id="sidebarTitle" class="sidebar-title">好友整理</div>
+        <nav id="friendsSidebar" class="sidebar-nav" aria-label="好友資料檢視">
           <button class="nav-item active" type="button"><span class="nav-symbol">☷</span>所有關係</button>
           <button id="friendsNav" class="nav-item" type="button"><span class="nav-symbol">♟</span>好友</button>
           <button id="outgoingNav" class="nav-item" type="button"><span class="nav-symbol">＋</span>送出的邀請</button>
+        </nav>
+        <div id="sidebarFilters" class="sidebar-filters">
+          <label>
+            <span>關係</span>
+            <select id="typeFilter">
+              <option value="all">全部</option>
+              <option value="friend">好友</option>
+              <option value="incoming_request">收到的邀請</option>
+              <option value="outgoing_request">送出的邀請</option>
+              <option value="blocked">封鎖</option>
+              <option value="implicit">其他</option>
+            </select>
+          </label>
+          <label>
+            <span>排序</span>
+            <select id="sortField">
+              <option value="since">成為好友時間</option>
+              <option value="account_created_at">帳號建立時間</option>
+              <option value="last_message_at">最後訊息時間</option>
+            </select>
+          </label>
+          <label>
+            <span>方向</span>
+            <select id="sortDirection">
+              <option value="asc">由早到晚</option>
+              <option value="desc">由晚到早</option>
+            </select>
+          </label>
+          <label>
+            <span>每頁</span>
+            <select id="pageSize">
+              <option value="50">50</option>
+              <option value="100" selected>100</option>
+              <option value="250">250</option>
+            </select>
+          </label>
+        </div>
+        <nav id="operationsSidebar" class="sidebar-nav" aria-label="操作紀錄篩選" hidden>
+          <button class="nav-item active" data-operation-filter="all" type="button"><span class="nav-symbol">☷</span>全部紀錄</button>
+          <button class="nav-item" data-operation-filter="remove_friend" type="button"><span class="nav-symbol">−</span>移除好友</button>
+          <button class="nav-item" data-operation-filter="send_friend_request" type="button"><span class="nav-symbol">＋</span>好友邀請</button>
         </nav>
         <div class="sidebar-heading">本機資料</div>
         <div class="cache-panel">
           <span id="sourceBadge" class="badge">載入中</span>
           <span id="fetchedAt">—</span>
+        </div>
+        <div id="sidebarScan">
+          <div class="sidebar-heading">最後訊息時間</div>
+          <div class="sidebar-scan">
+            <div class="sidebar-scan-line">
+              <span id="scanStatus" class="scan-status">讀取中</span>
+              <span id="scanCounts">—</span>
+            </div>
+            <progress id="scanProgress" max="1" value="0">0%</progress>
+            <p id="scanSummary">正在讀取掃描狀態…</p>
+            <div class="scan-actions">
+              <button id="startScanButton" class="button button-primary" type="button">補齊時間</button>
+              <button id="pauseScanButton" class="button button-secondary" type="button" hidden>暫停</button>
+            </div>
+          </div>
         </div>
         <div class="sidebar-footer">
           <button id="exportButton" class="sidebar-action" type="button">匯出 CSV</button>
@@ -36,10 +93,10 @@
       <div class="workspace">
         <header class="topbar">
           <div class="title-group">
-            <span class="title-icon">♟</span>
-            <h1>好友</h1>
+            <span id="workspaceIcon" class="title-icon">♟</span>
+            <h1 id="workspaceTitle">好友</h1>
             <span class="title-divider"></span>
-            <span class="title-subtitle">排序與整理</span>
+            <span id="workspaceSubtitle" class="title-subtitle">排序與整理</span>
           </div>
           <label class="header-search">
             <span class="sr-only">搜尋</span>
@@ -48,74 +105,20 @@
         </header>
 
         <main>
-          <section class="notice" aria-label="風險提醒">
-            <strong>帳號風險</strong>
-            <span>使用 user token 自動化可能違反 Discord 服務條款，即使只讀或低頻操作仍有停權風險。</span>
-          </section>
+          <div id="friendsView">
+            <section class="notice" aria-label="風險提醒">
+              <strong>帳號風險</strong>
+              <span>使用 user token 自動化可能違反 Discord 服務條款，即使只讀或低頻操作仍有停權風險。</span>
+            </section>
 
-          <section class="scan-panel" aria-label="最後訊息時間掃描">
-            <div class="scan-heading">
-              <div>
-                <h2>最後訊息時間</h2>
-                <p id="scanSummary">正在讀取掃描狀態…</p>
-              </div>
-              <span id="scanStatus" class="scan-status">讀取中</span>
-            </div>
-            <progress id="scanProgress" max="1" value="0">0%</progress>
-            <div class="scan-footer">
-              <span id="scanCounts">—</span>
-              <div class="scan-actions">
-                <button id="startScanButton" class="button button-primary" type="button">補齊時間</button>
-                <button id="pauseScanButton" class="button button-secondary" type="button" hidden>暫停</button>
-              </div>
-            </div>
-          </section>
-
-          <section class="summary" aria-label="資料摘要">
+            <section class="summary" aria-label="資料摘要">
             <div class="metric"><span>全部關係</span><strong id="totalCount">—</strong></div>
             <div class="metric"><span>好友</span><strong id="friendCount">—</strong></div>
             <div class="metric"><span>送出的邀請</span><strong id="outgoingCount">—</strong></div>
             <div class="metric"><span>有備註</span><strong id="notedCount">—</strong></div>
-          </section>
+            </section>
 
-          <section class="controls" aria-label="篩選與排序">
-            <label>
-              <span>關係</span>
-              <select id="typeFilter">
-                <option value="all">全部</option>
-                <option value="friend">好友</option>
-                <option value="incoming_request">收到的邀請</option>
-                <option value="outgoing_request">送出的邀請</option>
-                <option value="blocked">封鎖</option>
-                <option value="implicit">其他</option>
-              </select>
-            </label>
-            <label>
-              <span>排序</span>
-              <select id="sortField">
-                <option value="since">成為好友時間</option>
-                <option value="account_created_at">帳號建立時間</option>
-                <option value="last_message_at">最後訊息時間</option>
-              </select>
-            </label>
-            <label>
-              <span>方向</span>
-              <select id="sortDirection">
-                <option value="asc">由早到晚 / A–Z</option>
-                <option value="desc">由晚到早 / Z–A</option>
-              </select>
-            </label>
-            <label>
-              <span>每頁</span>
-              <select id="pageSize">
-                <option value="50">50</option>
-                <option value="100" selected>100</option>
-                <option value="250">250</option>
-              </select>
-            </label>
-          </section>
-
-          <section class="friend-list" aria-label="好友資料">
+            <section class="friend-list" aria-label="好友資料">
             <div class="list-meta">
               <span id="resultCount">載入中…</span>
               <span id="pageStatus"></span>
@@ -133,6 +136,28 @@
               <button id="previousPage" class="button button-secondary" type="button">上一頁</button>
               <button id="nextPage" class="button button-secondary" type="button">下一頁</button>
             </div>
+            </section>
+          </div>
+
+          <section id="operationsView" class="operations-view" aria-label="操作紀錄" hidden>
+            <div class="operations-summary">
+              <div>
+                <span>操作紀錄</span>
+                <strong id="operationCount">—</strong>
+              </div>
+              <label>
+                <span>搜尋紀錄</span>
+                <input id="operationSearch" type="search" placeholder="名稱、帳號或 ID" autocomplete="off">
+              </label>
+            </div>
+            <div class="operation-header" aria-hidden="true">
+              <span>使用者</span>
+              <span>操作</span>
+              <span>狀態</span>
+              <span>時間</span>
+              <span>動作</span>
+            </div>
+            <div id="operationRows" class="operation-rows"></div>
           </section>
         </main>
       </div>
@@ -171,7 +196,18 @@
       </form>
     </dialog>
 
+    <dialog id="readdFriendDialog">
+      <form method="dialog">
+        <h2>重新加好友</h2>
+        <p>確定要向 <strong id="readdFriendName"></strong> 送出好友邀請嗎？此操作只會送出邀請，對方仍需要接受。</p>
+        <div class="dialog-actions">
+          <button class="button button-secondary" value="cancel">取消</button>
+          <button class="button button-primary" value="confirm">送出邀請</button>
+        </div>
+      </form>
+    </dialog>
+
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script src="/app.js?v=6" defer></script>
+    <script src="/app.js?v=9" defer></script>
   </body>
 </html>

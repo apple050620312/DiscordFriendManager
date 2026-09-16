@@ -160,14 +160,21 @@ class RelationshipTests(unittest.TestCase):
         server.payload = payload
         server.data_lock = app.threading.RLock()
         server.discord_service = Mock()
+        server.operations = []
 
-        with patch.object(app, "write_cache") as write_cache:
+        with (
+            patch.object(app, "write_cache") as write_cache,
+            patch.object(app, "write_operations") as write_operations,
+        ):
             removed = server.remove_friend("123")
 
         self.assertTrue(removed)
         server.discord_service.remove_friend.assert_called_once_with("123")
         self.assertEqual([item["id"] for item in payload["relationships"]], ["456"])
         write_cache.assert_called_once_with(payload)
+        self.assertEqual(server.operations[0]["action"], "remove_friend")
+        self.assertEqual(server.operations[0]["status"], "completed")
+        self.assertEqual(write_operations.call_count, 2)
 
     def test_remove_friend_rejects_non_friend(self) -> None:
         server = object.__new__(app.DashboardServer)
@@ -176,11 +183,47 @@ class RelationshipTests(unittest.TestCase):
         }
         server.data_lock = app.threading.RLock()
         server.discord_service = Mock()
+        server.operations = []
 
         with self.assertRaisesRegex(ValueError, "只能用此操作移除好友"):
             server.remove_friend("456")
 
         server.discord_service.remove_friend.assert_not_called()
+
+    def test_readd_friend_records_request_and_restores_outgoing_relation(self) -> None:
+        removal = {
+            "id": "operation-1",
+            "action": "remove_friend",
+            "status": "completed",
+            "user": {
+                "id": "123",
+                "username": "example",
+                "global_name": "Example",
+                "display_name": "Example",
+                "avatar_url": None,
+                "public_flags": 0,
+            },
+            "relationship": {"id": "123", "type": 1, "type_name": "friend"},
+        }
+        server = object.__new__(app.DashboardServer)
+        server.payload = {"relationships": []}
+        server.data_lock = app.threading.RLock()
+        server.discord_service = Mock()
+        server.operations = [removal]
+
+        with (
+            patch.object(app, "write_cache") as write_cache,
+            patch.object(app, "write_operations") as write_operations,
+        ):
+            request = server.readd_friend("operation-1")
+
+        server.discord_service.send_friend_request.assert_called_once_with("123")
+        self.assertEqual(request["action"], "send_friend_request")
+        self.assertEqual(request["status"], "completed")
+        self.assertIsNotNone(removal["readd_requested_at"])
+        self.assertEqual(server.payload["relationships"][0]["type_name"], "outgoing_request")
+        self.assertEqual(write_operations.call_count, 2)
+        write_cache.assert_called_once_with(server.payload)
 
 
 if __name__ == "__main__":
